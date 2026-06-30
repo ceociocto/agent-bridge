@@ -24,8 +24,8 @@ export const capabilities: CapabilityDefinition[] = [
   {
     id: "contribution_optimization",
     name: "Contribution Optimization",
-    description: "Recommend contribution changes within plan and tax constraints.",
-    businessOutcome: "A contribution recommendation with projected impact and confirmation requirements.",
+    description: "Recommend or propose retirement contribution changes within plan and tax constraints.",
+    businessOutcome: "A contribution recommendation or proposed rate with projected impact and confirmation requirements.",
     requiredApis: [
       "Profile API",
       "Accounts API",
@@ -44,7 +44,8 @@ export const capabilities: CapabilityDefinition[] = [
     },
     examplePrompts: [
       "Should I increase my retirement contribution this year?",
-      "What contribution change improves retirement outcome without exceeding limits?"
+      "What contribution change improves retirement outcome without exceeding limits?",
+      "Increase my retirement contribution to 20%."
     ]
   }
 ];

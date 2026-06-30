@@ -35,7 +35,7 @@ type AgentResponse = {
     capabilityId?: string;
     confidence: number;
     reasoning: string;
-    resolver?: "llm" | "rules";
+    resolver?: "llm" | "rules" | "fallback";
     questions?: string[];
     availableCapabilities?: string[];
     policyDecision?: { name: string; status: string; detail: string };
@@ -246,7 +246,7 @@ function App() {
 
           <button className="run-button" type="submit" disabled={loading}>
             {loading ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
-            <span>Ask Platform</span>
+            <span>Ask Agent Bridge</span>
           </button>
           {error ? <p className="error">{error}</p> : null}
         </form>

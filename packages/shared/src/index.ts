@@ -52,7 +52,7 @@ export type IntentResolution = {
   capabilityId?: CapabilityId;
   confidence: number;
   reasoning: string;
-  resolver?: "llm" | "rules";
+  resolver?: "llm" | "rules" | "fallback";
   questions?: string[];
   availableCapabilities?: CapabilityId[];
   policyDecision?: AuditStep;
