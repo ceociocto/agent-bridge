@@ -1,3 +1,4 @@
+import { loadLocalEnv } from "./env.js";
 import cors from "cors";
 import express from "express";
 import { capabilityInvokeSchema } from "@agent-bridge/shared";
@@ -5,6 +6,9 @@ import { getAuditRecord } from "./audit.js";
 import { capabilities, getCapability } from "./catalog.js";
 import { composeContributionOptimization, composeRetirementReadiness } from "./composers.js";
 import { resolveIntent } from "./intent.js";
+import { isLlmIntentResolverConfigured } from "./llmIntentResolver.js";
+
+loadLocalEnv();
 
 const app = express();
 const port = Number(process.env.PORT ?? 4100);
@@ -13,7 +17,11 @@ app.use(cors());
 app.use(express.json());
 
 app.get("/health", (_req, res) => {
-  res.json({ service: "gateway", status: "ok" });
+  res.json({
+    service: "gateway",
+    status: "ok",
+    intentResolver: isLlmIntentResolverConfigured() ? "llm" : "rules"
+  });
 });
 
 app.get("/capabilities", (_req, res) => {
@@ -23,14 +31,18 @@ app.get("/capabilities", (_req, res) => {
   });
 });
 
-app.post("/intent/resolve", (req, res) => {
-  const prompt = String(req.body?.prompt ?? "");
-  if (!prompt.trim()) {
-    res.status(400).json({ error: "prompt is required" });
-    return;
-  }
+app.post("/intent/resolve", async (req, res, next) => {
+  try {
+    const prompt = String(req.body?.prompt ?? "");
+    if (!prompt.trim()) {
+      res.status(400).json({ error: "prompt is required" });
+      return;
+    }
 
-  res.json(resolveIntent(prompt));
+    res.json(await resolveIntent(prompt));
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.post("/capabilities/:capabilityId/invoke", async (req, res, next) => {
@@ -66,7 +78,7 @@ app.post("/agent/request", async (req, res, next) => {
       return;
     }
 
-    const resolution = resolveIntent(prompt);
+    const resolution = await resolveIntent(prompt);
     const capability = getCapability(resolution.capabilityId);
     if (!capability) {
       res.status(500).json({ error: "Resolved capability was not found" });

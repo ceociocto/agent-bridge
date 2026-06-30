@@ -51,6 +51,7 @@ export type IntentResolution = {
   capabilityId: CapabilityId;
   confidence: number;
   reasoning: string;
+  resolver?: "llm" | "rules";
 };
 
 export type AgentReadableResult = {

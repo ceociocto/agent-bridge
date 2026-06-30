@@ -149,11 +149,12 @@ contribution_optimization
 
 ## Extension Path
 
-This POC is intentionally implemented as a simulated MCP gateway. The architecture leaves room for later POCs:
+This POC is intentionally implemented as a simulated MCP gateway. The capability catalog is local and the value stream APIs are mock services. Intent resolution can use a real OpenAI-compatible LLM when `.env` provides `LLM_API_KEY`, `LLM_MODEL`, and optionally `LLM_BASE_URL`; otherwise it falls back to rules.
 
-1. Replace rule-based intent resolution with an LLM router.
-2. Expose each capability as a real MCP tool.
-3. Add additional value streams such as CAM or Brokerage.
-4. Replace mock APIs with enterprise sandbox APIs.
-5. Add OAuth, customer consent artifacts, and entitlement checks.
-6. Add A2A only when agent-to-agent collaboration is required.
+The architecture leaves room for later POCs:
+
+1. Expose each capability as a real MCP tool.
+2. Add additional value streams such as CAM or Brokerage.
+3. Replace mock APIs with enterprise sandbox APIs.
+4. Add OAuth, customer consent artifacts, and entitlement checks.
+5. Add A2A only when agent-to-agent collaboration is required.

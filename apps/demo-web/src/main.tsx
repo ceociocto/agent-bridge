@@ -34,6 +34,7 @@ type AgentResponse = {
     capabilityId: string;
     confidence: number;
     reasoning: string;
+    resolver?: "llm" | "rules";
   };
   capability: Capability;
   result: Record<string, unknown> & {
@@ -110,8 +111,8 @@ function App() {
     <main className="shell">
       <section className="masthead">
         <div>
-          <p className="eyebrow">Agent-friendly financial services</p>
-          <h1>Capability Gateway POC</h1>
+          <p className="eyebrow">Agent-Bridge</p>
+          <h1>AI Gateway POC</h1>
         </div>
         <div className="status-strip">
           <span>Mock APIs :4101</span>
@@ -207,6 +208,7 @@ function App() {
                   <p className="summary">{response.result.summary}</p>
                   <div className="metric-row">
                     <Metric label="Capability" value={response.resolution.capabilityId.replaceAll("_", " ")} />
+                    <Metric label="Resolver" value={response.resolution.resolver ?? "rules"} />
                     <Metric label="Confidence" value={`${Math.round(response.resolution.confidence * 100)}%`} />
                     <Metric label="Trace" value={response.result.audit_trace_id ?? "pending"} />
                   </div>

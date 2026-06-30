@@ -1,4 +1,4 @@
-# Agent Bridge POC
+# Agent-Bridge POC
 
 This repository contains a runnable POC for an agent-friendly financial service interface model.
 
@@ -24,6 +24,16 @@ Open:
 ```text
 http://localhost:4102
 ```
+
+## Optional Real LLM Intent Resolver
+
+The capability catalog is still a local business capability catalog, and the value stream APIs are still mock services for the POC. Intent resolution can call a real OpenAI-compatible LLM service when `.env` is configured:
+
+```bash
+cp .env.example .env
+```
+
+Set `LLM_API_KEY`, `LLM_MODEL`, and optionally `LLM_BASE_URL`. If those values are missing, or if the LLM call fails, the gateway falls back to the built-in rule resolver so the demo keeps running.
 
 ## Key Endpoints
 
