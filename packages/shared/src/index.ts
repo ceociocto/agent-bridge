@@ -47,11 +47,15 @@ export type AuditRecord = {
 };
 
 export type IntentResolution = {
+  status: "resolved" | "needs_clarification" | "unsupported" | "denied";
   intent: string;
-  capabilityId: CapabilityId;
+  capabilityId?: CapabilityId;
   confidence: number;
   reasoning: string;
   resolver?: "llm" | "rules";
+  questions?: string[];
+  availableCapabilities?: CapabilityId[];
+  policyDecision?: AuditStep;
 };
 
 export type AgentReadableResult = {

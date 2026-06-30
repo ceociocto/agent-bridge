@@ -3,10 +3,12 @@ import type { CapabilityId, IntentResolution } from "@agent-bridge/shared";
 import { capabilities } from "./catalog.js";
 
 const llmResolutionSchema = z.object({
+  status: z.enum(["resolved", "needs_clarification", "unsupported"]).default("resolved"),
   intent: z.string().min(1),
-  capabilityId: z.enum(["retirement_readiness_assessment", "contribution_optimization"]),
+  capabilityId: z.enum(["retirement_readiness_assessment", "contribution_optimization"]).nullable().optional(),
   confidence: z.number().min(0).max(1),
-  reasoning: z.string().min(1)
+  reasoning: z.string().min(1),
+  questions: z.array(z.string()).optional()
 });
 
 type ChatCompletionResponse = {
@@ -43,6 +45,10 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
   const config = getLlmConfig();
   if (!config) return null;
 
+  const timeoutMs = Number(process.env.LLM_TIMEOUT_MS ?? 8000);
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), timeoutMs);
+
   const capabilityList = capabilities.map((capability) => ({
     id: capability.id,
     name: capability.name,
@@ -55,6 +61,7 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
 
   const response = await fetch(`${config.baseUrl}/chat/completions`, {
     method: "POST",
+    signal: controller.signal,
     headers: {
       authorization: `Bearer ${config.apiKey}`,
       "content-type": "application/json"
@@ -68,7 +75,10 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
           role: "system",
           content:
             "You are an intent resolver for a governed financial capability gateway. " +
-            "Choose exactly one capability from the provided catalog. Return only JSON with keys: intent, capabilityId, confidence, reasoning."
+            "Return only JSON with keys: status, intent, capabilityId, confidence, reasoning, questions. " +
+            "Use status resolved only when one catalog capability clearly fits. " +
+            "Use needs_clarification when the user goal is financial but too vague. " +
+            "Use unsupported when no catalog capability fits."
         },
         {
           role: "user",
@@ -80,7 +90,7 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
         }
       ]
     })
-  });
+  }).finally(() => clearTimeout(timeout));
 
   if (!response.ok) {
     throw new Error(`LLM intent resolver returned ${response.status}`);
@@ -93,11 +103,19 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
   }
 
   const parsed = llmResolutionSchema.parse(JSON.parse(extractJson(content)));
+
+  if (parsed.status === "resolved" && !parsed.capabilityId) {
+    throw new Error("LLM intent resolver returned resolved without capabilityId");
+  }
+
   return {
+    status: parsed.status,
     intent: parsed.intent,
-    capabilityId: parsed.capabilityId as CapabilityId,
+    capabilityId: (parsed.capabilityId ?? undefined) as CapabilityId | undefined,
     confidence: parsed.confidence,
     reasoning: parsed.reasoning,
-    resolver: "llm"
+    resolver: "llm",
+    questions: parsed.questions,
+    availableCapabilities: parsed.status === "unsupported" ? capabilities.map((capability) => capability.id) : undefined
   };
 }

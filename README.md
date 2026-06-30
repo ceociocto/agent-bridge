@@ -53,3 +53,11 @@ The gateway exposes two business capabilities:
 2. `contribution_optimization`
 
 Each capability composes multiple mock value stream APIs and returns an agent-readable result with source APIs, policy checks, next actions, and an audit trace id.
+
+The demo web app also includes governed scenarios for:
+
+- Low-confidence intent requiring clarification
+- Unsupported requests outside the published capability catalog
+- Cross-customer permission denial
+- Sensitive identifier minimization
+- Recommendation-only actions that require customer confirmation

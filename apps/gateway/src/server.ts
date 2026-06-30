@@ -78,7 +78,25 @@ app.post("/agent/request", async (req, res, next) => {
       return;
     }
 
+    const scopeDecision = evaluateCustomerScope(prompt, String(req.body?.customerId ?? ""));
+    if (scopeDecision) {
+      res.json({
+        prompt,
+        resolution: scopeDecision
+      });
+      return;
+    }
+
     const resolution = await resolveIntent(prompt);
+
+    if (resolution.status !== "resolved" || !resolution.capabilityId) {
+      res.json({
+        prompt,
+        resolution
+      });
+      return;
+    }
+
     const capability = getCapability(resolution.capabilityId);
     if (!capability) {
       res.status(500).json({ error: "Resolved capability was not found" });
@@ -88,7 +106,7 @@ app.post("/agent/request", async (req, res, next) => {
     const parsed = capabilityInvokeSchema.safeParse({
       customerId: req.body?.customerId,
       targetRetirementAge: req.body?.targetRetirementAge,
-      desiredContributionRate: req.body?.desiredContributionRate
+      desiredContributionRate: req.body?.desiredContributionRate ?? extractContributionRate(prompt)
     });
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid request input", issues: parsed.error.issues });
@@ -110,6 +128,33 @@ app.post("/agent/request", async (req, res, next) => {
     next(error);
   }
 });
+
+function evaluateCustomerScope(prompt: string, customerId: string) {
+  const normalized = prompt.toUpperCase();
+  const requestedCustomer = normalized.match(/\bC\d{3}\b/)?.[0];
+  if (!requestedCustomer || requestedCustomer === customerId.toUpperCase()) return null;
+
+  return {
+    status: "denied" as const,
+    intent: "cross-customer data access",
+    confidence: 0.99,
+    reasoning: `The request references ${requestedCustomer}, but the active request context is scoped to ${customerId}.`,
+    resolver: "rules" as const,
+    policyDecision: {
+      name: "customer_scope_entitlement",
+      status: "requires_confirmation" as const,
+      detail: "The gateway blocks cross-customer access unless the caller has an explicit entitlement for that customer."
+    }
+  };
+}
+
+function extractContributionRate(prompt: string) {
+  const match = prompt.match(/\b(\d{1,2}(?:\.\d+)?)\s*%/);
+  if (!match) return undefined;
+
+  const rate = Number(match[1]);
+  return Number.isFinite(rate) ? rate : undefined;
+}
 
 app.get("/audit/:traceId", (req, res) => {
   const record = getAuditRecord(req.params.traceId);
