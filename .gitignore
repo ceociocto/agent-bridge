@@ -1,0 +1,6 @@
+node_modules/
+dist/
+.turbo/
+.DS_Store
+apps/demo-web/dist/
+*.log
