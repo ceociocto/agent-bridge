@@ -27,6 +27,7 @@ The important idea is that the agent does not receive unrestricted backend API a
 | `apps/mock-apis` | `4101` | Simulates existing enterprise value stream APIs. |
 | `apps/gateway` | `4100` | Capability gateway, intent resolver, policy checks, and composition layer. |
 | `apps/demo-web` | `4102` | Simulates a user agent connecting to the gateway. |
+| `apps/mcp-server` | stdio | Real MCP server that exposes the gateway through MCP tools and resources. |
 
 ## Run
 
@@ -42,6 +43,42 @@ http://localhost:4102
 ```
 
 If `4102` is already in use, Vite will print the alternate local URL.
+
+## MCP Server
+
+The POC includes a real stdio MCP server in `apps/mcp-server`. It acts as a protocol adapter over the governed capability gateway, so MCP clients get the same intent routing, policy checks, composition, and audit behavior as the HTTP demo.
+
+Start the mock APIs and gateway first:
+
+```bash
+pnpm --parallel --filter @agent-bridge/mock-apis --filter @agent-bridge/gateway dev
+```
+
+Then run the MCP server:
+
+```bash
+pnpm mcp:dev
+```
+
+MCP clients can also launch the built server directly:
+
+```bash
+pnpm build
+node apps/mcp-server/dist/server.js
+```
+
+Set `CAPABILITY_GATEWAY_URL` if the gateway is not running at `http://localhost:4100`.
+
+The MCP server exposes:
+
+- resources: `agent-bridge://gateway/health`, `agent-bridge://capabilities`
+- tools: `list_capabilities`, `resolve_intent`, `invoke_capability`, `agent_request`
+
+Run the MCP smoke test after starting the mock APIs and gateway:
+
+```bash
+pnpm mcp:smoke
+```
 
 ## LLM-Based Intent Resolution
 

@@ -5,6 +5,8 @@
   "type": "module",
   "scripts": {
     "dev": "pnpm --parallel --filter @agent-bridge/mock-apis --filter @agent-bridge/gateway --filter @agent-bridge/demo-web dev",
+    "mcp:dev": "pnpm --filter @agent-bridge/mcp-server dev",
+    "mcp:smoke": "pnpm --filter @agent-bridge/mcp-server smoke",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck"
   },
