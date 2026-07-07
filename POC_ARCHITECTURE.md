@@ -15,6 +15,7 @@ Expose business capabilities, not raw APIs.
 ```mermaid
 flowchart LR
     Agent["User Agent / Demo Web"]
+    McpServer["Real MCP Server"]
     Gateway["Simulated MCP Gateway"]
     Catalog["Capability Catalog"]
     Intent["Intent Resolver"]
@@ -24,6 +25,8 @@ flowchart LR
     Result["Agent-Readable Result"]
 
     Agent --> Gateway
+    Agent --> McpServer
+    McpServer --> Gateway
     Gateway --> Catalog
     Gateway --> Intent
     Intent --> Composer
@@ -118,6 +121,44 @@ The UI shows:
 - Policy checks
 - Composition trace
 
+### 4. MCP Server
+
+Location:
+
+```text
+apps/mcp-server
+```
+
+Purpose:
+
+```text
+Expose the governed capability gateway through the real Model Context Protocol.
+```
+
+Transport:
+
+```text
+stdio
+```
+
+MCP resources:
+
+```text
+agent-bridge://gateway/health
+agent-bridge://capabilities
+```
+
+MCP tools:
+
+```text
+list_capabilities
+resolve_intent
+invoke_capability
+agent_request
+```
+
+The MCP server is intentionally a protocol adapter over `apps/gateway`; it does not reimplement financial capability logic. This keeps HTTP clients and MCP clients on the same policy, composition, and audit path.
+
 ## Capability Composition
 
 ### Retirement Readiness Assessment
@@ -153,7 +194,7 @@ This POC is intentionally implemented as a simulated MCP gateway. The capability
 
 The architecture leaves room for later POCs:
 
-1. Expose each capability as a real MCP tool.
+1. Add additional MCP tools and resources as the capability catalog grows.
 2. Add additional value streams such as CAM or Brokerage.
 3. Replace mock APIs with enterprise sandbox APIs.
 4. Add OAuth, customer consent artifacts, and entitlement checks.
