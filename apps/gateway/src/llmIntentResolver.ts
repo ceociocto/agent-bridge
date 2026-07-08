@@ -57,7 +57,10 @@ export function isLlmIntentResolverConfigured() {
   return Boolean(getLlmConfig());
 }
 
-export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolution | null> {
+export async function resolveIntentWithLlm(
+  prompt: string,
+  candidateCapabilityIds?: CapabilityId[]
+): Promise<IntentResolution | null> {
   const config = getLlmConfig();
   if (!config) return null;
 
@@ -65,7 +68,11 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), timeoutMs);
 
-  const capabilityList = capabilities.map((capability) => ({
+  const candidateSet = candidateCapabilityIds?.length ? new Set(candidateCapabilityIds) : null;
+  const selectedCapabilities = candidateSet
+    ? capabilities.filter((capability) => candidateSet.has(capability.id))
+    : capabilities;
+  const capabilityList = selectedCapabilities.map((capability) => ({
     id: capability.id,
     name: capability.name,
     description: capability.description,
@@ -102,7 +109,7 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
         content: JSON.stringify({
           prompt,
           capabilities: capabilityList,
-          allowedCapabilityIds: capabilities.map((capability) => capability.id)
+          allowedCapabilityIds: selectedCapabilities.map((capability) => capability.id)
         })
       }
     ]
@@ -148,7 +155,7 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
       questions: parsed.questions?.length
         ? parsed.questions
         : ["Can you clarify whether this is about retirement readiness or contribution optimization?"],
-      availableCapabilities: capabilities.map((capability) => capability.id)
+      availableCapabilities: selectedCapabilities.map((capability) => capability.id)
     };
   }
 
@@ -163,7 +170,7 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
     policyDecision: parsed.policyDecision ?? undefined,
     availableCapabilities:
       parsed.status === "unsupported" || parsed.status === "needs_clarification"
-        ? capabilities.map((capability) => capability.id)
+        ? selectedCapabilities.map((capability) => capability.id)
         : undefined
   };
 }

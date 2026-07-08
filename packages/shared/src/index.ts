@@ -41,7 +41,7 @@ export type CapabilityDefinition = {
 
 export type AuditStep = {
   name: string;
-  status: "passed" | "completed" | "requires_confirmation";
+  status: "passed" | "completed" | "requires_confirmation" | "denied";
   detail: string;
 };
 
@@ -61,10 +61,36 @@ export type IntentResolution = {
   capabilityId?: CapabilityId;
   confidence: number;
   reasoning: string;
-  resolver?: "llm" | "rules" | "fallback";
+  resolver?: "llm" | "rules" | "semantic" | "fallback";
   questions?: string[];
   availableCapabilities?: CapabilityId[];
   policyDecision?: AuditStep;
+  routingTrace?: IntentRoutingStep[];
+};
+
+export type IntentRoutingStep = {
+  layer:
+    | "policy_guard"
+    | "rules_guard"
+    | "semantic_router"
+    | "llm_adjudicator"
+    | "fallback";
+  status:
+    | "passed"
+    | "resolved"
+    | "needs_clarification"
+    | "unsupported"
+    | "denied"
+    | "skipped"
+    | "escalated";
+  detail: string;
+  capabilityId?: CapabilityId;
+  confidence?: number;
+  candidates?: Array<{
+    capabilityId: CapabilityId;
+    score: number;
+    matchedTerms?: string[];
+  }>;
 };
 
 export type AgentReadableResult = {

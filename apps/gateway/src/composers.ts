@@ -34,10 +34,39 @@ function createResultBase(
     compositionSteps
   });
 
+  // Reflect the actual audit write in the policy check rather than the static
+  // "will be generated" assertion that evaluatePolicy emits before the record exists.
+  if (capability.policy.auditRequired) {
+    for (const check of policyChecks) {
+      if (check.name === "audit_required") {
+        check.status = "completed";
+        check.detail = `Audit trace ${audit.traceId} recorded for this capability invocation.`;
+      }
+    }
+  }
+
   return {
     source_apis: capability.requiredApis,
     policy_checks: policyChecks,
     audit_trace_id: audit.traceId
+  };
+}
+
+// Minimal result for entitlement/eligibility denials: still audited, but no
+// product-sensitive fields are disclosed.
+function gatedResult(
+  capability: CapabilityDefinition,
+  input: CapabilityInvokeInput,
+  policyChecks: AuditStep[],
+  summary: string,
+  nextActions: Array<Record<string, unknown>>
+): AgentReadableResult {
+  const base = createResultBase(capability, input, policyChecks, []);
+  return {
+    capability: capability.id,
+    summary,
+    next_actions: nextActions,
+    ...base
   };
 }
 
@@ -94,7 +123,9 @@ export async function composeIsaAllowanceReview(
     },
     key_factors: [
       `The 2026/27 ISA allowance used in this synthetic demo is ${money(isa.annualIsaAllowance)}.`,
-      `Current Stocks and Shares ISA subscriptions are ${money(isa.stocksAndSharesIsaSubscribed)}.`,
+      `Stocks and Shares ISA subscriptions are ${money(isa.stocksAndSharesIsaSubscribed)}${
+        isa.cashIsaSubscribed > 0 ? ` plus ${money(isa.cashIsaSubscribed)} in a Cash ISA` : ""
+      }, totalling ${money(subscribed)} used of the allowance.`,
       `Uninvested ISA cash is ${money(isa.uninvestedCash)}, which may create cash drag for a balanced investor.`
     ],
     risks: [
@@ -126,6 +157,37 @@ export async function composeSippDrawdownPathwayReview(
     valueStreamClient.taxLimits(input.customerId)
   ]);
 
+  const policyChecks = evaluatePolicy(capability);
+
+  const hasDrawdownArrangement =
+    accounts.some((account) => account.type === "pension_drawdown_account") || drawdown.pensionPot > 0;
+  if (!hasDrawdownArrangement) {
+    policyChecks.push({
+      name: "product_eligibility",
+      status: "denied",
+      detail: `${profile.name} holds no SIPP drawdown arrangement; the drawdown pathway review is not applicable.`
+    });
+    return gatedResult(
+      capability,
+      input,
+      policyChecks,
+      `${profile.name} has no SIPP drawdown arrangement to review.`,
+      [
+        { action: "confirm_product_holding", required: true },
+        {
+          action: "explore_personal_investing_isa_allowance_review",
+          recommended: profile.segment === "personal_investing"
+        }
+      ]
+    );
+  }
+
+  policyChecks.push({
+    name: "product_eligibility",
+    status: "passed",
+    detail: `${profile.name} holds a SIPP drawdown arrangement.`
+  });
+
   compositionSteps.push({
     name: "load_sipp_drawdown_context",
     status: "completed",
@@ -150,7 +212,6 @@ export async function composeSippDrawdownPathwayReview(
     detail: "Retirement Projection API estimated income coverage under the selected drawdown context."
   });
 
-  const policyChecks = evaluatePolicy(capability);
   const base = createResultBase(capability, input, policyChecks, compositionSteps);
   const withdrawalStatus = withdrawalRate > 0.05 ? "requires_review" : "within_demo_threshold";
 
@@ -215,6 +276,40 @@ export async function composeWorkplacePensionContributionGuidance(
     valueStreamClient.taxLimits(input.customerId)
   ]);
 
+  const policyChecks = evaluatePolicy(capability);
+
+  const hasWorkplacePension = accounts.some((account) => account.wrapper === "Workplace Pension");
+  if (!hasWorkplacePension) {
+    policyChecks.push({
+      name: "product_eligibility",
+      status: "denied",
+      detail: `${profile.name} holds no workplace pension on record; contribution guidance is not applicable.`
+    });
+    return gatedResult(
+      capability,
+      input,
+      policyChecks,
+      `${profile.name} has no workplace pension to optimise.`,
+      [
+        { action: "confirm_product_holding", required: true },
+        {
+          action: "explore_personal_investing_isa_allowance_review",
+          recommended: profile.segment === "personal_investing"
+        },
+        {
+          action: "explore_sipp_drawdown_pathway_review",
+          recommended: profile.segment === "sipp_drawdown"
+        }
+      ]
+    );
+  }
+
+  policyChecks.push({
+    name: "product_eligibility",
+    status: "passed",
+    detail: `${profile.name} holds a workplace pension.`
+  });
+
   compositionSteps.push({
     name: "load_workplace_pension_context",
     status: "completed",
@@ -251,7 +346,6 @@ export async function composeWorkplacePensionContributionGuidance(
     detail: "Retirement Projection API estimated outcome for the proposed contribution rate."
   });
 
-  const policyChecks = evaluatePolicy(capability);
   const base = createResultBase(capability, input, policyChecks, compositionSteps);
 
   return {
@@ -308,25 +402,73 @@ export async function composeAdviserModelPortfolioReview(
     valueStreamClient.adviserPortfolio(input.customerId)
   ]);
 
+  const platformAccounts = accounts.filter((account) => account.wrapper === "Adviser Platform");
+  const policyChecks = evaluatePolicy(capability);
+  const requestedFirm = input.adviserFirmId;
+  const entitled = platformAccounts.length > 0 && requestedFirm === adviserPortfolio.adviserFirmId;
+
+  // Entitlement is verified from product holding + an explicit caller-supplied firm id.
+  // The client's own servicing firm must never be silently adopted as the "requested"
+  // firm, and a non-advised customer must not receive adviser platform disclosure.
+  if (platformAccounts.length === 0) {
+    policyChecks.push({
+      name: "adviser_firm_entitlement",
+      status: "denied",
+      detail: `${profile.name} holds no adviser platform portfolio; adviser capability entitlement cannot be established.`
+    });
+    return gatedResult(
+      capability,
+      input,
+      policyChecks,
+      `Adviser model portfolio review is not available for ${profile.name}; no adviser platform holding on record.`,
+      [{ action: "confirm_adviser_platform_entitlement", required: true }]
+    );
+  }
+
+  if (!requestedFirm) {
+    policyChecks.push({
+      name: "adviser_firm_entitlement",
+      status: "requires_confirmation",
+      detail: "Caller must supply an adviserFirmId so the gateway can verify entitlement before disclosing adviser platform data."
+    });
+    return gatedResult(
+      capability,
+      input,
+      policyChecks,
+      "Adviser firm entitlement could not be verified; adviserFirmId was not supplied. Portfolio details withheld.",
+      [{ action: "supply_adviser_firm_id", required: true }]
+    );
+  }
+
+  if (!entitled) {
+    policyChecks.push({
+      name: "adviser_firm_entitlement",
+      status: "requires_confirmation",
+      detail: `Requested adviser firm ${requestedFirm} does not match the servicing firm ${adviserPortfolio.adviserFirmId} for this client.`
+    });
+    return gatedResult(
+      capability,
+      input,
+      policyChecks,
+      `Requested adviser firm ${requestedFirm} is not the servicing firm for ${profile.name}; portfolio details withheld pending entitlement review.`,
+      [{ action: "confirm_adviser_firm_entitlement", required: true }]
+    );
+  }
+
+  policyChecks.push({
+    name: "adviser_firm_entitlement",
+    status: "passed",
+    detail: `Caller firm ${requestedFirm} matches the servicing firm for ${profile.name}.`
+  });
+
   compositionSteps.push({
     name: "load_adviser_platform_context",
     status: "completed",
     detail: "Composed Adviser Entitlement, Client Profile, Platform Accounts, Model Portfolio, and Holdings APIs."
   });
 
-  const requestedFirm = input.adviserFirmId ?? adviserPortfolio.adviserFirmId;
-  const entitled = requestedFirm === adviserPortfolio.adviserFirmId;
   const requestedRisk = input.riskProfile ?? profile.riskProfile;
   const riskMismatch = requestedRisk !== adviserPortfolio.targetRiskProfile;
-  const platformAccounts = accounts.filter((account) => account.wrapper === "Adviser Platform");
-  const policyChecks = evaluatePolicy(capability);
-  if (!entitled) {
-    policyChecks.push({
-      name: "adviser_firm_entitlement",
-      status: "requires_confirmation",
-      detail: "Requested adviser firm does not match the synthetic servicing firm for this client."
-    });
-  }
   const base = createResultBase(capability, input, policyChecks, compositionSteps);
 
   return {

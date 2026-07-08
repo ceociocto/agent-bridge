@@ -5,6 +5,7 @@ import {
   BrainCircuit,
   ClipboardList,
   Database,
+  Filter,
   GitBranch,
   Loader2,
   Network,
@@ -35,10 +36,22 @@ type AgentResponse = {
     capabilityId?: string;
     confidence: number;
     reasoning: string;
-    resolver?: "llm" | "rules" | "fallback";
+    resolver?: "llm" | "rules" | "semantic" | "fallback";
     questions?: string[];
     availableCapabilities?: string[];
     policyDecision?: { name: string; status: string; detail: string };
+    routingTrace?: Array<{
+      layer: string;
+      status: string;
+      detail: string;
+      capabilityId?: string;
+      confidence?: number;
+      candidates?: Array<{
+        capabilityId: string;
+        score: number;
+        matchedTerms?: string[];
+      }>;
+    }>;
   };
   capability?: Capability;
   result?: Record<string, unknown> & {
@@ -309,12 +322,26 @@ function App() {
               ) : (
                 <div className="empty-state">
                   <Network size={32} />
-                  <p>Send a request to watch the gateway resolve intent and compose enterprise APIs.</p>
+                  <p>Send a request to watch the gateway filter, route, and compose enterprise APIs.</p>
                 </div>
               )}
             </section>
 
             <aside className="trace-panel">
+              <div className="panel-title">
+                <Filter size={20} />
+                <span>Routing Pipeline</span>
+              </div>
+              {response?.resolution.routingTrace?.length ? (
+                <RoutingTrace steps={response.resolution.routingTrace} />
+              ) : (
+                <p className="muted">Routing decisions appear after the gateway classifies a request.</p>
+              )}
+            </aside>
+          </div>
+
+          <div className="response-grid">
+            <section className="trace-panel wide">
               <div className="panel-title">
                 <GitBranch size={20} />
                 <span>Composition Trace</span>
@@ -349,7 +376,7 @@ function App() {
               ) : (
                 <p className="muted">Audit trace appears after the first gateway invocation.</p>
               )}
-            </aside>
+            </section>
           </div>
         </section>
       </section>
@@ -396,6 +423,37 @@ function GovernanceOutcome({ response }: { response: AgentResponse }) {
         </div>
       ) : null}
       <pre>{JSON.stringify(response.resolution, null, 2)}</pre>
+    </div>
+  );
+}
+
+function RoutingTrace({ steps }: { steps: NonNullable<AgentResponse["resolution"]["routingTrace"]> }) {
+  return (
+    <div className="routing-steps">
+      {steps.map((step, index) => (
+        <article className={`routing-step ${step.status}`} key={`${step.layer}-${index}`}>
+          <div className="routing-step-head">
+            <span>{step.layer.replaceAll("_", " ")}</span>
+            <strong>{step.status.replaceAll("_", " ")}</strong>
+          </div>
+          <p>{step.detail}</p>
+          <div className="routing-meta">
+            {step.capabilityId ? <span>{step.capabilityId.replaceAll("_", " ")}</span> : null}
+            {typeof step.confidence === "number" ? <span>{Math.round(step.confidence * 100)}%</span> : null}
+          </div>
+          {step.candidates?.length ? (
+            <div className="candidate-list">
+              {step.candidates.map((candidate) => (
+                <div className="candidate" key={candidate.capabilityId}>
+                  <span>{candidate.capabilityId.replaceAll("_", " ")}</span>
+                  <strong>{candidate.score.toFixed(2)}</strong>
+                  {candidate.matchedTerms?.length ? <em>{candidate.matchedTerms.join(", ")}</em> : null}
+                </div>
+              ))}
+            </div>
+          ) : null}
+        </article>
+      ))}
     </div>
   );
 }
