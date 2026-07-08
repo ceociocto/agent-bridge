@@ -1,8 +1,10 @@
 import { z } from "zod";
 
 export const capabilityIds = [
-  "retirement_readiness_assessment",
-  "contribution_optimization"
+  "personal_investing_isa_allowance_review",
+  "sipp_drawdown_pathway_review",
+  "workplace_pension_contribution_guidance",
+  "adviser_platform_model_portfolio_review"
 ] as const;
 
 export type CapabilityId = (typeof capabilityIds)[number];
@@ -10,7 +12,14 @@ export type CapabilityId = (typeof capabilityIds)[number];
 export const capabilityInvokeSchema = z.object({
   customerId: z.string().min(1),
   targetRetirementAge: z.number().int().min(50).max(75).optional(),
-  desiredContributionRate: z.number().min(0).max(100).optional()
+  desiredContributionRate: z.number().min(0).max(100).optional(),
+  plannedIsaSubscription: z.number().min(0).max(100000).optional(),
+  plannedDrawdownIncome: z.number().min(0).max(250000).optional(),
+  drawdownGoal: z
+    .enum(["keep_invested", "take_income_within_five_years", "cash_out", "buy_annuity"])
+    .optional(),
+  adviserFirmId: z.string().min(1).optional(),
+  riskProfile: z.enum(["cautious", "balanced", "growth", "adventurous"]).optional()
 });
 
 export type CapabilityInvokeInput = z.infer<typeof capabilityInvokeSchema>;
@@ -23,7 +32,7 @@ export type CapabilityDefinition = {
   requiredApis: string[];
   inputSchema: Record<string, unknown>;
   policy: {
-    dataAccess: "read" | "recommendation";
+    dataAccess: "read" | "analysis" | "recommendation";
     requiresCustomerConfirmation: boolean;
     auditRequired: boolean;
   };

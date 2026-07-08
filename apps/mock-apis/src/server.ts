@@ -1,12 +1,16 @@
 import cors from "cors";
 import express from "express";
 import {
+  adviserPortfolios,
   accounts,
   contributions,
+  drawdownProfiles,
   holdings,
   isCustomerId,
+  isaSubscriptions,
   profiles,
-  taxLimits
+  taxLimits,
+  workplacePlans
 } from "./data.js";
 
 const app = express();
@@ -25,7 +29,7 @@ function getCustomer(req: express.Request, res: express.Response) {
 }
 
 app.get("/health", (_req, res) => {
-  res.json({ service: "mock-apis", status: "ok" });
+  res.json({ service: "synthetic-fidelity-uk-value-streams", status: "ok" });
 });
 
 app.get("/profile/:customerId", (req, res) => {
@@ -58,6 +62,30 @@ app.get("/tax-limits/:customerId", (req, res) => {
   res.json(taxLimits[customerId]);
 });
 
+app.get("/isa-subscriptions/:customerId", (req, res) => {
+  const customerId = getCustomer(req, res);
+  if (!customerId) return;
+  res.json(isaSubscriptions[customerId]);
+});
+
+app.get("/drawdown/:customerId", (req, res) => {
+  const customerId = getCustomer(req, res);
+  if (!customerId) return;
+  res.json(drawdownProfiles[customerId]);
+});
+
+app.get("/workplace-plan/:customerId", (req, res) => {
+  const customerId = getCustomer(req, res);
+  if (!customerId) return;
+  res.json(workplacePlans[customerId]);
+});
+
+app.get("/adviser-portfolio/:customerId", (req, res) => {
+  const customerId = getCustomer(req, res);
+  if (!customerId) return;
+  res.json(adviserPortfolios[customerId]);
+});
+
 app.post("/projection", (req, res) => {
   const {
     customerId,
@@ -84,8 +112,8 @@ app.post("/projection", (req, res) => {
   const rate = contributionRate ?? contributions[customerId].currentRate;
   const annualContribution = profile.annualIncome * (rate / 100);
   const projectedBalance = Math.round(
-    balance * Math.pow(1.052, yearsToRetirement) +
-      annualContribution * (((Math.pow(1.052, yearsToRetirement) - 1) / 0.052) || 0)
+    balance * Math.pow(1.047, yearsToRetirement) +
+      annualContribution * (((Math.pow(1.047, yearsToRetirement) - 1) / 0.047) || 0)
   );
   const targetSpending = targetAnnualRetirementSpending ?? profile.targetAnnualRetirementSpending;
   const estimatedAnnualIncome = Math.round(projectedBalance * 0.04);
@@ -104,5 +132,5 @@ app.post("/projection", (req, res) => {
 });
 
 app.listen(port, () => {
-  console.log(`Mock value stream APIs listening on http://localhost:${port}`);
+  console.log(`Synthetic Fidelity UK value stream APIs listening on http://localhost:${port}`);
 });

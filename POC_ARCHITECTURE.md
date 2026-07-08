@@ -16,12 +16,12 @@ Expose business capabilities, not raw APIs.
 flowchart LR
     Agent["User Agent / Demo Web"]
     McpServer["Real MCP Server"]
-    Gateway["Simulated MCP Gateway"]
+    Gateway["Governed Capability Gateway"]
     Catalog["Capability Catalog"]
     Intent["Intent Resolver"]
     Composer["Semantic Composer"]
     Policy["Policy + Consent + Audit"]
-    MockApis["Mock Value Stream APIs"]
+    ValueStreams["Synthetic Fidelity UK Value Streams"]
     Result["Agent-Readable Result"]
 
     Agent --> Gateway
@@ -32,15 +32,15 @@ flowchart LR
     Intent --> Composer
     Catalog --> Composer
     Composer --> Policy
-    Composer --> MockApis
+    Composer --> ValueStreams
     Policy --> Result
-    MockApis --> Result
+    ValueStreams --> Result
     Result --> Agent
 ```
 
 ## Service Boundaries
 
-### 1. Mock Value Stream APIs
+### 1. Synthetic Fidelity UK Value Stream APIs
 
 Location:
 
@@ -51,10 +51,10 @@ apps/mock-apis
 Purpose:
 
 ```text
-Represent existing enterprise systems inside the financial firm.
+Represent existing enterprise systems inside the financial firm with synthetic Fidelity UK-style demo data.
 ```
 
-Mock APIs:
+Value stream APIs:
 
 ```text
 GET  /profile/:customerId
@@ -62,6 +62,10 @@ GET  /accounts/:customerId
 GET  /holdings/:customerId
 GET  /contributions/:customerId
 GET  /tax-limits/:customerId
+GET  /isa-subscriptions/:customerId
+GET  /drawdown/:customerId
+GET  /workplace-plan/:customerId
+GET  /adviser-portfolio/:customerId
 POST /projection
 ```
 
@@ -78,7 +82,7 @@ apps/gateway
 Purpose:
 
 ```text
-Simulate an MCP-style gateway that exposes business capabilities.
+Expose governed business capabilities to HTTP clients and to the real MCP stdio server.
 ```
 
 Gateway responsibilities:
@@ -93,8 +97,10 @@ Gateway responsibilities:
 Current capabilities:
 
 ```text
-retirement_readiness_assessment
-contribution_optimization
+personal_investing_isa_allowance_review
+sipp_drawdown_pathway_review
+workplace_pension_contribution_guidance
+adviser_platform_model_portfolio_review
 ```
 
 ### 3. Demo Web Agent
@@ -169,41 +175,69 @@ The MCP server is intentionally a protocol adapter over `apps/gateway`; it does 
 
 ## Capability Composition
 
-### Retirement Readiness Assessment
+### Personal Investing ISA Allowance Review
 
 ```text
-retirement_readiness_assessment
+personal_investing_isa_allowance_review
     = Profile API
     + Accounts API
+    + ISA Subscription API
     + Holdings API
-    + Projection API
     + policy checks
     + audit trace
     + agent-readable response
 ```
 
-### Contribution Optimization
+### SIPP Drawdown Pathway Review
 
 ```text
-contribution_optimization
+sipp_drawdown_pathway_review
     = Profile API
     + Accounts API
-    + Contribution API
-    + Tax Limits API
-    + Projection API
+    + Drawdown API
+    + Pension Allowance API
+    + Retirement Projection API
     + consent requirement
+    + audit trace
+    + agent-readable response
+```
+
+### Workplace Pension Contribution Guidance
+
+```text
+workplace_pension_contribution_guidance
+    = Profile API
+    + Workplace Plan API
+    + Contribution API
+    + Pension Allowance API
+    + Retirement Projection API
+    + consent requirement
+    + audit trace
+    + agent-readable response
+```
+
+### Adviser Platform Model Portfolio Review
+
+```text
+adviser_platform_model_portfolio_review
+    = Adviser Entitlement API
+    + Client Profile API
+    + Platform Accounts API
+    + Model Portfolio API
+    + Holdings API
+    + policy checks
     + audit trace
     + agent-readable response
 ```
 
 ## Extension Path
 
-This POC is intentionally implemented as a simulated MCP gateway. The capability catalog is local and the value stream APIs are mock services. Intent resolution can use a real OpenAI-compatible LLM when `.env` provides `LLM_API_KEY`, `LLM_MODEL`, and optionally `LLM_BASE_URL`; otherwise it falls back to rules.
+This POC uses a real MCP TypeScript SDK v2 beta stdio server as the MCP surface. The capability catalog is local and the value stream APIs are synthetic Fidelity UK-style demo services. Intent resolution can use a real OpenAI-compatible LLM when `.env` provides `LLM_API_KEY`, `LLM_MODEL`, and optionally `LLM_BASE_URL`; otherwise it falls back to deterministic rules and then conservative unsupported handling.
 
 The architecture leaves room for later POCs:
 
 1. Add additional MCP tools and resources as the capability catalog grows.
-2. Add additional value streams such as CAM or Brokerage.
-3. Replace mock APIs with enterprise sandbox APIs.
+2. Add additional value streams such as transfers, dealing, secure messaging, and adviser servicing.
+3. Replace synthetic APIs with enterprise sandbox APIs.
 4. Add OAuth, customer consent artifacts, and entitlement checks.
 5. Add A2A only when agent-to-agent collaboration is required.

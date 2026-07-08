@@ -60,9 +60,9 @@ async function main() {
   const invokeResult = await client.callTool({
     name: "invoke_capability",
     arguments: {
-      capabilityId: "retirement_readiness_assessment",
-      customerId: "C001",
-      targetRetirementAge: 62
+      capabilityId: "personal_investing_isa_allowance_review",
+      customerId: "UK001",
+      plannedIsaSubscription: 8000
     }
   });
   if (invokeResult.isError) throw new Error(`invoke_capability failed: ${JSON.stringify(invokeResult)}`);
@@ -70,9 +70,9 @@ async function main() {
   const agentResult = await client.callTool({
     name: "agent_request",
     arguments: {
-      prompt: "Can this client retire at age 62?",
-      customerId: "C001",
-      targetRetirementAge: 62
+      prompt: "Can I add £8,000 to my Fidelity Stocks and Shares ISA this tax year?",
+      customerId: "UK001",
+      plannedIsaSubscription: 8000
     }
   });
   if (agentResult.isError) throw new Error(`agent_request failed: ${JSON.stringify(agentResult)}`);

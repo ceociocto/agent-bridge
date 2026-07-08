@@ -1,11 +1,13 @@
 import { z } from "zod";
-import type { CapabilityId, IntentResolution } from "@agent-bridge/shared";
+import { capabilityIds, type CapabilityId, type IntentResolution } from "@agent-bridge/shared";
 import { capabilities } from "./catalog.js";
+
+const capabilityIdSchema = z.enum([...capabilityIds] as [CapabilityId, ...CapabilityId[]]);
 
 const llmResolutionSchema = z.object({
   status: z.enum(["resolved", "needs_clarification", "unsupported", "denied"]).default("resolved"),
   intent: z.string().min(1),
-  capabilityId: z.enum(["retirement_readiness_assessment", "contribution_optimization"]).nullable().optional(),
+  capabilityId: capabilityIdSchema.nullable().optional(),
   confidence: z.coerce.number().min(0).max(1),
   reasoning: z.string().min(1),
   questions: z.array(z.string()).nullable().optional(),
@@ -84,11 +86,14 @@ export async function resolveIntentWithLlm(prompt: string): Promise<IntentResolu
           "Return only valid JSON with keys: status, intent, capabilityId, confidence, reasoning, questions, policyDecision. " +
           "Do not include markdown. Keep reasoning under 25 words. " +
           "Use status resolved only when one catalog capability clearly fits. " +
-          "A request to set, raise, lower, or change a retirement contribution rate can fit contribution_optimization because that capability produces a recommendation or proposed rate; customer confirmation policy blocks execution later. " +
-          "Do not mark a contribution-rate change request unsupported merely because the gateway does not execute the final transaction. " +
+          "The catalog is inspired by public Fidelity UK business lines: Personal Investing, SIPP retirement/drawdown, Workplace Investing, and Adviser Solutions. " +
+          "A request to set, raise, lower, or change a pension contribution can fit workplace_pension_contribution_guidance because the capability produces a recommendation; confirmation policy blocks execution later. " +
+          "A request about ISA allowance, Stocks and Shares ISA, investment account cash drag, or tax-wrapper usage fits personal_investing_isa_allowance_review. " +
+          "A request about SIPP drawdown, investment pathways, taxable pension income, or MPAA fits sipp_drawdown_pathway_review. " +
+          "A request about model portfolio drift, advised client review, or adviser platform evidence fits adviser_platform_model_portfolio_review. " +
           "Use needs_clarification when the user goal is financial but too vague. " +
           "Use unsupported when no catalog capability fits. " +
-          "Use denied when the request asks for regulated identifiers, full account numbers, credentials, private tax identifiers, or data exposure that violates data minimization. " +
+          "Use denied when the request asks for regulated identifiers, full account numbers, credentials, National Insurance numbers, private tax identifiers, or data exposure that violates data minimization. " +
           "When denied, include policyDecision with a concise policy name and a safe alternative. " +
           "Never invent a capability id; capabilityId must be null unless status is resolved."
       },

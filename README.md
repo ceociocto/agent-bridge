@@ -24,7 +24,7 @@ The important idea is that the agent does not receive unrestricted backend API a
 
 | Service | Port | Purpose |
 |---|---:|---|
-| `apps/mock-apis` | `4101` | Simulates existing enterprise value stream APIs. |
+| `apps/mock-apis` | `4101` | Synthetic Fidelity UK-style value stream APIs for demo data. |
 | `apps/gateway` | `4100` | Capability gateway, intent resolver, policy checks, and composition layer. |
 | `apps/demo-web` | `4102` | Simulates a user agent connecting to the gateway. |
 | `apps/mcp-server` | stdio | Real MCP server, built on the MCP TypeScript SDK v2 beta, that exposes the gateway through MCP tools and resources. |
@@ -48,7 +48,7 @@ If `4102` is already in use, Vite will print the alternate local URL.
 
 The POC includes a real stdio MCP server in `apps/mcp-server`, migrated to the split MCP TypeScript SDK v2 beta packages. It acts as a protocol adapter over the governed capability gateway, so MCP clients get the same intent routing, policy checks, composition, and audit behavior as the HTTP demo.
 
-Start the mock APIs and gateway first:
+Start the synthetic value stream APIs and gateway first:
 
 ```bash
 pnpm --parallel --filter @agent-bridge/mock-apis --filter @agent-bridge/gateway dev
@@ -74,7 +74,7 @@ The MCP server exposes:
 - resources: `agent-bridge://gateway/health`, `agent-bridge://capabilities`
 - tools: `list_capabilities`, `resolve_intent`, `invoke_capability`, `agent_request`
 
-Run the MCP smoke test after starting the mock APIs and gateway:
+Run the MCP smoke test after starting the synthetic value stream APIs and gateway:
 
 ```bash
 pnpm mcp:smoke
@@ -82,7 +82,7 @@ pnpm mcp:smoke
 
 ### Claude Code Demo
 
-Build the server, then keep the mock APIs and gateway running:
+Build the server, then keep the synthetic value stream APIs and gateway running:
 
 ```bash
 pnpm build
@@ -123,9 +123,11 @@ Demo prompts:
 
 ```text
 Use agent-bridge to list the governed business capabilities.
-Use agent-bridge to assess whether customer C001 can retire at age 62.
-Use agent-bridge to propose increasing customer C001's retirement contribution to 20%.
-Use agent-bridge to access retirement information for C002 while my active customer is C001.
+Use agent-bridge to check whether customer UK001 can add £8,000 to a Stocks and Shares ISA.
+Use agent-bridge to review SIPP drawdown sustainability for customer UK002 taking £18,000 a year.
+Use agent-bridge to assess whether UK003 captures the full workplace pension employer match.
+Use agent-bridge to prepare a model portfolio drift review for advised client UK003.
+Use agent-bridge to access information for UK002 while my active customer is UK001.
 ```
 
 ## LLM-Based Intent Resolution
@@ -136,7 +138,7 @@ The gateway uses an OpenAI-compatible LLM API to return a structured resolution:
 {
   "status": "resolved | needs_clarification | unsupported | denied",
   "intent": "short intent label",
-  "capabilityId": "retirement_readiness_assessment",
+  "capabilityId": "personal_investing_isa_allowance_review",
   "confidence": 0.91,
   "reasoning": "why this decision was made",
   "questions": [],
@@ -163,13 +165,13 @@ INTENT_RESOLUTION_MIN_CONFIDENCE=0.62
 
 For example, if the provider exposes an OpenAI-compatible chat completions API, `LLM_BASE_URL` can point to that endpoint and `LLM_MODEL` can be set to the provider model name. `LLM_RESPONSE_FORMAT` defaults to `none` for broader provider compatibility. Set it to `json_object` only when the provider supports OpenAI-style JSON response format.
 
-If no LLM is configured, or if the LLM call fails, the gateway uses a conservative fallback:
+If no LLM is configured, or if the LLM call fails, the gateway uses a deterministic UK financial-services rule baseline and then a conservative fallback:
 
 ```text
-unsupported
+resolved | needs_clarification | unsupported | denied
 ```
 
-It does not guess a default business capability from free-form text.
+It does not guess a default business capability when neither the rules nor the published catalog clearly match.
 
 ## Key Endpoints
 
@@ -182,14 +184,32 @@ POST http://localhost:4100/capabilities/:capabilityId/invoke
 GET  http://localhost:4100/audit/:traceId
 ```
 
+## Router Evals
+
+The repo includes a deterministic golden set for Fidelity UK-style routing and policy checks:
+
+```text
+evals/fidelity-uk-router-cases.jsonl
+```
+
+Run:
+
+```bash
+pnpm eval:router
+```
+
+The first dataset covers Personal Investing, SIPP drawdown, Workplace Investing, Adviser Solutions, ambiguous requests, unsupported requests, and sensitive-data denial. It intentionally evaluates the router/policy decision layer before any real customer execution.
+
 ## Current POC Scope
 
-The gateway exposes two business capabilities:
+The gateway exposes four Fidelity UK-style business capabilities:
 
-1. `retirement_readiness_assessment`
-2. `contribution_optimization`
+1. `personal_investing_isa_allowance_review`
+2. `sipp_drawdown_pathway_review`
+3. `workplace_pension_contribution_guidance`
+4. `adviser_platform_model_portfolio_review`
 
-Each capability composes multiple mock value stream APIs and returns an agent-readable result with:
+Each capability composes multiple synthetic value stream APIs and returns an agent-readable result with:
 
 - selected capability
 - source APIs
@@ -351,7 +371,7 @@ Engineering tasks:
 - Add PII detection for user prompts and generated responses.
 - Add data minimization rules per capability.
 - Add secure redaction of logs and audit traces.
-- Add policy tests for SSN, tax ID, full account number, credentials, and account transfer data.
+- Add policy tests for National Insurance number, tax ID, full account number, credentials, and account transfer data.
 
 AWS candidates:
 
@@ -363,7 +383,7 @@ AWS candidates:
 
 ### Phase 6: API Composition and Enterprise Integration
 
-Goal: replace mock APIs with governed enterprise sandbox APIs and then production APIs.
+Goal: replace synthetic value stream APIs with governed enterprise sandbox APIs and then production APIs.
 
 Product outcomes:
 

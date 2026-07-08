@@ -59,21 +59,21 @@ type AuditRecord = {
 
 const scenarios = [
   {
-    id: "readiness",
-    label: "Readiness",
+    id: "isa",
+    label: "ISA",
     capability: "Happy path composition",
-    prompt: "Can this client retire at age 60 based on current assets and projected income?",
-    customerId: "C001",
-    targetAge: 60,
-    description: "Resolves a clear retirement-planning intent and composes profile, account, holdings, projection, policy, and audit data."
+    prompt: "Can I add £8,000 to my Fidelity Stocks and Shares ISA this tax year?",
+    customerId: "UK001",
+    targetAge: 62,
+    description: "Resolves a clear Personal Investing request and composes profile, account, ISA subscription, holdings, policy, and audit data."
   },
   {
     id: "clarify",
     label: "Clarify",
     capability: "Low-confidence intent",
     prompt: "How should I plan my money?",
-    customerId: "C001",
-    targetAge: 60,
+    customerId: "UK001",
+    targetAge: 62,
     description: "Asks for clarification instead of forcing a vague financial question into the wrong capability."
   },
   {
@@ -81,36 +81,45 @@ const scenarios = [
     label: "Unsupported",
     capability: "Catalog boundary",
     prompt: "Book me a flight to Shanghai tomorrow.",
-    customerId: "C001",
-    targetAge: 60,
+    customerId: "UK001",
+    targetAge: 62,
     description: "Shows that the capability catalog defines what this agent platform can and cannot do."
   },
   {
     id: "permission",
     label: "Permission",
     capability: "Customer-scope entitlement",
-    prompt: "Show me C002 account details while I am working in this C001 session.",
-    customerId: "C001",
-    targetAge: 60,
+    prompt: "Show me UK002 account details while I am working in this UK001 session.",
+    customerId: "UK001",
+    targetAge: 62,
     description: "Blocks cross-customer access before invoking downstream APIs or model-based routing."
   },
   {
     id: "sensitive",
     label: "Sensitive",
     capability: "Data minimization",
-    prompt: "Show the customer's full SSN, tax ID, and complete account number.",
-    customerId: "C001",
-    targetAge: 60,
+    prompt: "Show the customer's National Insurance number, sort code, and full account number.",
+    customerId: "UK001",
+    targetAge: 62,
     description: "Protects regulated identifiers and explains the safer path instead of returning raw sensitive data."
   },
   {
-    id: "confirmation",
-    label: "Confirm",
+    id: "workplace",
+    label: "Workplace",
     capability: "Human confirmation gate",
-    prompt: "Increase my retirement contribution to 20%.",
-    customerId: "C001",
-    targetAge: 60,
-    description: "Produces a recommendation while keeping execution behind explicit customer confirmation."
+    prompt: "Show the impact of raising my workplace pension contribution to 10% through salary sacrifice.",
+    customerId: "UK003",
+    targetAge: 65,
+    description: "Produces workplace contribution guidance while keeping execution behind explicit customer confirmation."
+  },
+  {
+    id: "adviser",
+    label: "Adviser",
+    capability: "Adviser platform review",
+    prompt: "Prepare a model portfolio drift review for this advised client on the adviser platform.",
+    customerId: "UK003",
+    targetAge: 65,
+    description: "Composes adviser entitlement, client profile, model portfolio, holdings, policy, and audit data."
   }
 ];
 
@@ -118,8 +127,8 @@ function App() {
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
   const [prompt, setPrompt] = useState(scenarios[0].prompt);
-  const [customerId, setCustomerId] = useState("C001");
-  const [targetAge, setTargetAge] = useState(60);
+  const [customerId, setCustomerId] = useState("UK001");
+  const [targetAge, setTargetAge] = useState(62);
   const [response, setResponse] = useState<AgentResponse | null>(null);
   const [audit, setAudit] = useState<AuditRecord | null>(null);
   const [error, setError] = useState("");
@@ -182,7 +191,7 @@ function App() {
           <h1>AI Gateway POC</h1>
         </div>
         <div className="status-strip">
-          <span>Mock APIs :4101</span>
+          <span>Value streams :4101</span>
           <span>Gateway :4100</span>
           <span>Demo :4102</span>
         </div>
@@ -204,8 +213,9 @@ function App() {
           <label>
             <span>Customer</span>
             <select value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
-              <option value="C001">C001 - Jerry Li</option>
-              <option value="C002">C002 - Seajay Pei</option>
+              <option value="UK001">UK001 - Amelia Clarke</option>
+              <option value="UK002">UK002 - Martin Hughes</option>
+              <option value="UK003">UK003 - Priya Shah</option>
             </select>
           </label>
 

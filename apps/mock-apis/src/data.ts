@@ -1,130 +1,302 @@
-export type CustomerId = "C001" | "C002";
+export type CustomerId = "UK001" | "UK002" | "UK003";
 
 export const profiles = {
-  C001: {
-    customerId: "C001",
-    name: "Jerry Li",
-    age: 45,
-    annualIncome: 120000,
-    householdStatus: "married",
-    retirementGoalAge: 60,
-    targetAnnualRetirementSpending: 88000,
-    riskProfile: "moderate"
+  UK001: {
+    customerId: "UK001",
+    name: "Amelia Clarke",
+    age: 38,
+    annualIncome: 85000,
+    householdStatus: "partnered",
+    retirementGoalAge: 62,
+    targetAnnualRetirementSpending: 42000,
+    riskProfile: "balanced",
+    segment: "personal_investing"
   },
-  C002: {
-    customerId: "C002",
-    name: "Seajay Pei",
-    age: 55,
-    annualIncome: 165000,
+  UK002: {
+    customerId: "UK002",
+    name: "Martin Hughes",
+    age: 58,
+    annualIncome: 128000,
+    householdStatus: "married",
+    retirementGoalAge: 63,
+    targetAnnualRetirementSpending: 56000,
+    riskProfile: "growth",
+    segment: "sipp_drawdown"
+  },
+  UK003: {
+    customerId: "UK003",
+    name: "Priya Shah",
+    age: 45,
+    annualIncome: 97000,
     householdStatus: "single",
     retirementGoalAge: 65,
-    targetAnnualRetirementSpending: 105000,
-    riskProfile: "balanced"
+    targetAnnualRetirementSpending: 48000,
+    riskProfile: "balanced",
+    segment: "workplace_and_advised"
   }
 } as const;
 
 export const accounts = {
-  C001: [
+  UK001: [
     {
-      accountId: "RA-401K-001",
-      type: "401k",
+      accountId: "ISA-UK001",
+      type: "stocks_and_shares_isa",
       status: "active",
-      balance: 385000,
+      balance: 74200,
       eligibleForContribution: true,
-      employerMatch: "50% up to 6%"
+      wrapper: "ISA"
     },
     {
-      accountId: "RA-IRA-001",
-      type: "traditional_ira",
+      accountId: "GIA-UK001",
+      type: "investment_account",
       status: "active",
-      balance: 72000,
-      eligibleForContribution: true,
-      employerMatch: "none"
+      balance: 23600,
+      eligibleForContribution: false,
+      wrapper: "General Investment Account"
     }
   ],
-  C002: [
+  UK002: [
     {
-      accountId: "RA-401K-002",
-      type: "401k",
+      accountId: "SIPP-UK002",
+      type: "self_invested_personal_pension",
       status: "active",
-      balance: 715000,
+      balance: 612000,
       eligibleForContribution: true,
-      employerMatch: "100% up to 4%"
+      wrapper: "SIPP"
     },
     {
-      accountId: "RA-BROKERAGE-002",
-      type: "taxable_brokerage",
+      accountId: "DRAW-UK002",
+      type: "pension_drawdown_account",
       status: "active",
-      balance: 210000,
+      balance: 188000,
       eligibleForContribution: false,
-      employerMatch: "none"
+      wrapper: "SIPP Drawdown"
+    }
+  ],
+  UK003: [
+    {
+      accountId: "WPP-UK003",
+      type: "workplace_pension",
+      status: "active",
+      balance: 214000,
+      eligibleForContribution: true,
+      wrapper: "Workplace Pension"
+    },
+    {
+      accountId: "ADV-UK003",
+      type: "adviser_platform_portfolio",
+      status: "active",
+      balance: 365000,
+      eligibleForContribution: false,
+      wrapper: "Adviser Platform"
     }
   ]
 } as const;
 
 export const holdings = {
-  C001: {
+  UK001: {
     allocation: {
-      equities: 68,
-      bonds: 23,
-      cash: 5,
+      equities: 62,
+      bonds: 22,
+      cash: 11,
+      alternatives: 5
+    },
+    topHoldings: ["Fidelity Index World Fund", "Fidelity Cash Fund", "UK Short-Dated Bond Fund"],
+    riskExposure: "balanced_growth_with_cash_drag"
+  },
+  UK002: {
+    allocation: {
+      equities: 48,
+      bonds: 36,
+      cash: 12,
       alternatives: 4
     },
-    topHoldings: ["US Total Market Fund", "International Equity Fund", "Core Bond Fund"],
-    riskExposure: "moderate_market_volatility"
+    topHoldings: ["Fidelity Multi Asset Income Fund", "Strategic Bond Fund", "Global Dividend Fund"],
+    riskExposure: "income_oriented_with_sequence_risk"
   },
-  C002: {
+  UK003: {
     allocation: {
-      equities: 55,
-      bonds: 35,
-      cash: 8,
-      alternatives: 2
+      equities: 57,
+      bonds: 31,
+      cash: 7,
+      alternatives: 5
     },
-    topHoldings: ["Target Date Income Fund", "Dividend Equity Fund", "Municipal Bond Fund"],
-    riskExposure: "balanced_income_and_growth"
+    topHoldings: ["Balanced Model Portfolio", "Global Equity Fund", "UK Corporate Bond Fund"],
+    riskExposure: "balanced_model_with_minor_drift"
+  }
+} as const;
+
+export const isaSubscriptions = {
+  UK001: {
+    taxYear: "2026/27",
+    annualIsaAllowance: 20000,
+    stocksAndSharesIsaSubscribed: 9500,
+    cashIsaSubscribed: 2500,
+    flexibleIsaReplacementAvailable: 0,
+    uninvestedCash: 8200
+  },
+  UK002: {
+    taxYear: "2026/27",
+    annualIsaAllowance: 20000,
+    stocksAndSharesIsaSubscribed: 0,
+    cashIsaSubscribed: 0,
+    flexibleIsaReplacementAvailable: 0,
+    uninvestedCash: 0
+  },
+  UK003: {
+    taxYear: "2026/27",
+    annualIsaAllowance: 20000,
+    stocksAndSharesIsaSubscribed: 20000,
+    cashIsaSubscribed: 0,
+    flexibleIsaReplacementAvailable: 0,
+    uninvestedCash: 1800
+  }
+} as const;
+
+export const drawdownProfiles = {
+  UK001: {
+    pensionPot: 0,
+    crystallisedAmount: 0,
+    taxFreeCashTaken: 0,
+    currentAnnualIncome: 0,
+    selectedPathwayGoal: "keep_invested",
+    taxableIncomeTaken: false
+  },
+  UK002: {
+    pensionPot: 800000,
+    crystallisedAmount: 188000,
+    taxFreeCashTaken: 47000,
+    currentAnnualIncome: 12000,
+    selectedPathwayGoal: "take_income_within_five_years",
+    taxableIncomeTaken: true
+  },
+  UK003: {
+    pensionPot: 214000,
+    crystallisedAmount: 0,
+    taxFreeCashTaken: 0,
+    currentAnnualIncome: 0,
+    selectedPathwayGoal: "keep_invested",
+    taxableIncomeTaken: false
+  }
+} as const;
+
+export const workplacePlans = {
+  UK001: {
+    employerName: "Northbank Media Ltd",
+    employeeContributionRate: 5,
+    employerContributionRate: 3,
+    employerMatchMaxRate: 5,
+    salarySacrificeAvailable: false,
+    planDefaultFund: "FutureWise Growth"
+  },
+  UK002: {
+    employerName: "Hughes Consulting LLP",
+    employeeContributionRate: 8,
+    employerContributionRate: 4,
+    employerMatchMaxRate: 4,
+    salarySacrificeAvailable: true,
+    planDefaultFund: "FutureWise Income"
+  },
+  UK003: {
+    employerName: "Mercury Retail Group",
+    employeeContributionRate: 6,
+    employerContributionRate: 4,
+    employerMatchMaxRate: 8,
+    salarySacrificeAvailable: true,
+    planDefaultFund: "FutureWise Balanced"
   }
 } as const;
 
 export const contributions = {
-  C001: {
-    currentRate: 8,
-    yearToDateEmployeeContribution: 9600,
-    yearToDateEmployerContribution: 3600,
+  UK001: {
+    currentRate: 5,
+    yearToDateEmployeeContribution: 3540,
+    yearToDateEmployerContribution: 2124,
     history: [
-      { year: 2024, rate: 7 },
+      { year: 2024, rate: 4 },
+      { year: 2025, rate: 5 },
+      { year: 2026, rate: 5 }
+    ]
+  },
+  UK002: {
+    currentRate: 8,
+    yearToDateEmployeeContribution: 10240,
+    yearToDateEmployerContribution: 5120,
+    history: [
+      { year: 2024, rate: 8 },
       { year: 2025, rate: 8 },
       { year: 2026, rate: 8 }
     ]
   },
-  C002: {
-    currentRate: 11,
-    yearToDateEmployeeContribution: 18150,
-    yearToDateEmployerContribution: 6600,
+  UK003: {
+    currentRate: 6,
+    yearToDateEmployeeContribution: 5820,
+    yearToDateEmployerContribution: 3880,
     history: [
-      { year: 2024, rate: 10 },
-      { year: 2025, rate: 11 },
-      { year: 2026, rate: 11 }
+      { year: 2024, rate: 5 },
+      { year: 2025, rate: 6 },
+      { year: 2026, rate: 6 }
     ]
   }
 } as const;
 
 export const taxLimits = {
-  C001: {
-    taxYear: 2026,
-    annual401kLimit: 23500,
-    catchUpEligible: false,
-    catchUpLimit: 0,
-    remainingContributionRoom: 13900
+  UK001: {
+    taxYear: "2026/27",
+    pensionAnnualAllowance: 60000,
+    moneyPurchaseAnnualAllowance: 10000,
+    mpaaTriggered: false,
+    remainingPensionAnnualAllowance: 54336
   },
-  C002: {
-    taxYear: 2026,
-    annual401kLimit: 23500,
-    catchUpEligible: true,
-    catchUpLimit: 7500,
-    remainingContributionRoom: 12850
+  UK002: {
+    taxYear: "2026/27",
+    pensionAnnualAllowance: 60000,
+    moneyPurchaseAnnualAllowance: 10000,
+    mpaaTriggered: true,
+    remainingPensionAnnualAllowance: 0
+  },
+  UK003: {
+    taxYear: "2026/27",
+    pensionAnnualAllowance: 60000,
+    moneyPurchaseAnnualAllowance: 10000,
+    mpaaTriggered: false,
+    remainingPensionAnnualAllowance: 50200
+  }
+} as const;
+
+export const adviserPortfolios = {
+  UK001: {
+    adviserFirmId: "FA-100",
+    adviserFirmName: "Oakmere Financial Planning",
+    modelPortfolioName: "Fidelity WealthBuilder Balanced",
+    targetRiskProfile: "balanced",
+    lastSuitabilityReviewDate: "2026-02-14",
+    driftScore: 3.2,
+    rebalanceRecommended: false,
+    platformAssets: 97800
+  },
+  UK002: {
+    adviserFirmId: "FA-200",
+    adviserFirmName: "South Coast Wealth",
+    modelPortfolioName: "Fidelity WealthBuilder Income",
+    targetRiskProfile: "growth",
+    lastSuitabilityReviewDate: "2025-11-07",
+    driftScore: 6.8,
+    rebalanceRecommended: true,
+    platformAssets: 800000
+  },
+  UK003: {
+    adviserFirmId: "FA-100",
+    adviserFirmName: "Oakmere Financial Planning",
+    modelPortfolioName: "Fidelity WealthBuilder Balanced",
+    targetRiskProfile: "balanced",
+    lastSuitabilityReviewDate: "2025-09-20",
+    driftScore: 5.6,
+    rebalanceRecommended: true,
+    platformAssets: 365000
   }
 } as const;
 
 export function isCustomerId(value: string): value is CustomerId {
-  return value === "C001" || value === "C002";
+  return value === "UK001" || value === "UK002" || value === "UK003";
 }

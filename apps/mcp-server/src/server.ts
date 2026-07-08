@@ -132,20 +132,42 @@ export function createServer() {
         capabilityId: capabilityIdSchema.describe("Published Agent-Bridge capability id."),
         customerId: z.string().min(1).describe("Customer id in the active request context."),
         targetRetirementAge: z.number().int().min(50).max(75).optional(),
-        desiredContributionRate: z.number().min(0).max(100).optional()
+        desiredContributionRate: z.number().min(0).max(100).optional(),
+        plannedIsaSubscription: z.number().min(0).max(100000).optional(),
+        plannedDrawdownIncome: z.number().min(0).max(250000).optional(),
+        drawdownGoal: z
+          .enum(["keep_invested", "take_income_within_five_years", "cash_out", "buy_annuity"])
+          .optional(),
+        adviserFirmId: z.string().min(1).optional(),
+        riskProfile: z.enum(["cautious", "balanced", "growth", "adventurous"]).optional()
       }),
       annotations: {
         readOnlyHint: false,
         openWorldHint: false
       }
     },
-    async ({ capabilityId, customerId, targetRetirementAge, desiredContributionRate }) => {
+    async ({
+      capabilityId,
+      customerId,
+      targetRetirementAge,
+      desiredContributionRate,
+      plannedIsaSubscription,
+      plannedDrawdownIncome,
+      drawdownGoal,
+      adviserFirmId,
+      riskProfile
+    }) => {
       try {
         return jsonText(
           await gatewayClient.invokeCapability(capabilityId, {
             customerId,
             targetRetirementAge,
-            desiredContributionRate
+            desiredContributionRate,
+            plannedIsaSubscription,
+            plannedDrawdownIncome,
+            drawdownGoal,
+            adviserFirmId,
+            riskProfile
           })
         );
       } catch (error) {
@@ -164,21 +186,43 @@ export function createServer() {
         prompt: z.string().min(1).describe("The user's natural-language request."),
         customerId: z.string().min(1).describe("Customer id in the active request context."),
         targetRetirementAge: z.number().int().min(50).max(75).optional(),
-        desiredContributionRate: z.number().min(0).max(100).optional()
+        desiredContributionRate: z.number().min(0).max(100).optional(),
+        plannedIsaSubscription: z.number().min(0).max(100000).optional(),
+        plannedDrawdownIncome: z.number().min(0).max(250000).optional(),
+        drawdownGoal: z
+          .enum(["keep_invested", "take_income_within_five_years", "cash_out", "buy_annuity"])
+          .optional(),
+        adviserFirmId: z.string().min(1).optional(),
+        riskProfile: z.enum(["cautious", "balanced", "growth", "adventurous"]).optional()
       }),
       annotations: {
         readOnlyHint: false,
         openWorldHint: false
       }
     },
-    async ({ prompt, customerId, targetRetirementAge, desiredContributionRate }) => {
+    async ({
+      prompt,
+      customerId,
+      targetRetirementAge,
+      desiredContributionRate,
+      plannedIsaSubscription,
+      plannedDrawdownIncome,
+      drawdownGoal,
+      adviserFirmId,
+      riskProfile
+    }) => {
       try {
         return jsonText(
           await gatewayClient.agentRequest({
             prompt,
             customerId,
             targetRetirementAge,
-            desiredContributionRate
+            desiredContributionRate,
+            plannedIsaSubscription,
+            plannedDrawdownIncome,
+            drawdownGoal,
+            adviserFirmId,
+            riskProfile
           })
         );
       } catch (error) {
