@@ -18,7 +18,10 @@ flowchart LR
     McpServer["Real MCP Server"]
     Gateway["Governed Capability Gateway"]
     Catalog["Capability Catalog"]
-    Intent["Intent Resolver"]
+    PolicyGuard["Policy Guard"]
+    RulesGuard["Rules Guard"]
+    SemanticRouter["Local Semantic Router"]
+    LlmAdjudicator["Optional LLM Adjudicator"]
     Composer["Semantic Composer"]
     Policy["Policy + Consent + Audit"]
     ValueStreams["Synthetic Fidelity UK Value Streams"]
@@ -28,8 +31,12 @@ flowchart LR
     Agent --> McpServer
     McpServer --> Gateway
     Gateway --> Catalog
-    Gateway --> Intent
-    Intent --> Composer
+    Gateway --> PolicyGuard
+    PolicyGuard --> RulesGuard
+    RulesGuard --> SemanticRouter
+    SemanticRouter --> LlmAdjudicator
+    SemanticRouter --> Composer
+    LlmAdjudicator --> Composer
     Catalog --> Composer
     Composer --> Policy
     Composer --> ValueStreams
@@ -88,7 +95,7 @@ Expose governed business capabilities to HTTP clients and to the real MCP stdio 
 Gateway responsibilities:
 
 - Capability discovery
-- Intent resolution
+- Layered intent routing
 - API composition
 - Policy and consent checks
 - Audit trace generation
@@ -102,6 +109,29 @@ sipp_drawdown_pathway_review
 workplace_pension_contribution_guidance
 adviser_platform_model_portfolio_review
 ```
+
+Intent routing stages:
+
+```text
+1. Policy guard
+   Blocks sensitive identifiers and other hard policy violations before semantic routing.
+
+2. Rules guard
+   Detects deterministic regulated-domain conflicts, such as equal-strength ISA and SIPP signals,
+   and asks for clarification instead of silently downgrading to a lower-risk capability.
+
+3. Local semantic router
+   Compares the request against vectors built from capability metadata and example prompts.
+   Clear matches resolve without an LLM call.
+
+4. Optional LLM adjudicator
+   Runs only for ambiguous semantic matches and receives only the top-K candidate capabilities.
+
+5. Conservative fallback
+   Returns unsupported when no layer can safely select a published capability.
+```
+
+Each resolution includes `routingTrace`, which is surfaced in the demo UI and MCP/HTTP responses so reviewers can see which layer passed, resolved, escalated, denied, or fell back.
 
 ### 3. Demo Web Agent
 
@@ -232,7 +262,7 @@ adviser_platform_model_portfolio_review
 
 ## Extension Path
 
-This POC uses a real MCP TypeScript SDK v2 beta stdio server as the MCP surface. The capability catalog is local and the value stream APIs are synthetic Fidelity UK-style demo services. Intent resolution can use a real OpenAI-compatible LLM when `.env` provides `LLM_API_KEY`, `LLM_MODEL`, and optionally `LLM_BASE_URL`; otherwise it falls back to deterministic rules and then conservative unsupported handling.
+This POC uses a real MCP TypeScript SDK v2 beta stdio server as the MCP surface. The capability catalog is local and the value stream APIs are synthetic Fidelity UK-style demo services. Intent routing first uses policy, deterministic, and local semantic layers. It can use a real OpenAI-compatible LLM when `.env` provides `LLM_API_KEY`, `LLM_MODEL`, and optionally `LLM_BASE_URL`, but only as an adjudicator for ambiguous top-K semantic candidates. If the LLM is unavailable, the gateway keeps using semantic routing, clarification, and conservative unsupported handling.
 
 The architecture leaves room for later POCs:
 
@@ -240,4 +270,5 @@ The architecture leaves room for later POCs:
 2. Add additional value streams such as transfers, dealing, secure messaging, and adviser servicing.
 3. Replace synthetic APIs with enterprise sandbox APIs.
 4. Add OAuth, customer consent artifacts, and entitlement checks.
-5. Add A2A only when agent-to-agent collaboration is required.
+5. Replace the local semantic router with managed embeddings and a vector index when the catalog grows.
+6. Add A2A only when agent-to-agent collaboration is required.

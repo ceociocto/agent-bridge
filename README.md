@@ -130,9 +130,24 @@ Use agent-bridge to prepare a model portfolio drift review for advised client UK
 Use agent-bridge to access information for UK002 while my active customer is UK001.
 ```
 
-## LLM-Based Intent Resolution
+## Layered Intent Routing
 
-The gateway uses an OpenAI-compatible LLM API to return a structured resolution:
+The gateway uses a layered router so the first pass does not always spend LLM tokens:
+
+```text
+prompt
+  -> policy guard
+  -> deterministic rules guard
+  -> local semantic router
+  -> optional LLM adjudicator for ambiguous top-K candidates
+  -> conservative fallback
+```
+
+Every intent response includes a `routingTrace` array so the demo can show which layer passed, resolved, denied, escalated, or fell back.
+
+The semantic router is local and token-free. It builds lightweight vectors from each published capability's name, description, business outcome, required APIs, input fields, and example prompts. Clear semantic matches resolve without calling the LLM. Ambiguous matches escalate to the LLM with only the top-K semantic candidates instead of the full catalog.
+
+The final resolution shape is:
 
 ```json
 {
@@ -142,11 +157,12 @@ The gateway uses an OpenAI-compatible LLM API to return a structured resolution:
   "confidence": 0.91,
   "reasoning": "why this decision was made",
   "questions": [],
-  "policyDecision": null
+  "policyDecision": null,
+  "routingTrace": []
 }
 ```
 
-Configure the resolver with a local `.env`:
+Configure the optional LLM adjudicator with a local `.env`:
 
 ```bash
 cp .env.example .env
@@ -161,11 +177,16 @@ LLM_BASE_URL=https://your-openai-compatible-endpoint/v1
 LLM_TIMEOUT_MS=30000
 LLM_RESPONSE_FORMAT=none
 INTENT_RESOLUTION_MIN_CONFIDENCE=0.62
+INTENT_SEMANTIC_ROUTER=on
+SEMANTIC_ROUTER_RESOLVE_THRESHOLD=0.18
+SEMANTIC_ROUTER_UNSUPPORTED_THRESHOLD=0.08
+SEMANTIC_ROUTER_MARGIN_THRESHOLD=0.05
+SEMANTIC_ROUTER_TOP_K=3
 ```
 
 For example, if the provider exposes an OpenAI-compatible chat completions API, `LLM_BASE_URL` can point to that endpoint and `LLM_MODEL` can be set to the provider model name. `LLM_RESPONSE_FORMAT` defaults to `none` for broader provider compatibility. Set it to `json_object` only when the provider supports OpenAI-style JSON response format.
 
-If no LLM is configured, or if the LLM call fails, the gateway uses a deterministic UK financial-services rule baseline and then a conservative fallback:
+If no LLM is configured, or if the LLM call fails, the gateway still uses policy guard, rules guard, semantic routing, and then conservative fallback:
 
 ```text
 resolved | needs_clarification | unsupported | denied
@@ -232,11 +253,11 @@ The demo web app includes governed scenarios for:
 | Control | Current POC Implementation | Production Direction |
 |---|---|---|
 | Capability catalog | Static local catalog in code | Versioned enterprise capability registry |
-| Intent resolution | LLM structured classifier with JSON schema | Evaluated router with model governance and fallback strategy |
-| Unsupported requests | LLM returns `unsupported`; no capability invoked | Policy-backed no-match handling and product telemetry |
-| Clarification | LLM returns `needs_clarification` and questions | Slot-filling workflow and conversation state |
+| Intent resolution | Layered policy/rules/semantic router with optional LLM adjudication | Evaluated router with model governance and fallback strategy |
+| Unsupported requests | Semantic no-match or fallback returns `unsupported`; no capability invoked | Policy-backed no-match handling and product telemetry |
+| Clarification | Rules, semantic router, or LLM returns `needs_clarification` and questions | Slot-filling workflow and conversation state |
 | Customer scope | Deterministic request-context check | Identity, entitlement, and relationship-based access control |
-| Sensitive data | LLM can return `denied` with policy decision | Dedicated PII classifier, DLP, tokenization, and masking |
+| Sensitive data | Policy guard returns `denied` with data-minimization decision | Dedicated PII classifier, DLP, tokenization, and masking |
 | Confirmation | Capability policy marks high-impact action as confirmation-required | Consent artifacts, approval workflows, and non-repudiation |
 | Audit | In-memory trace record | Immutable audit store, trace correlation, and SIEM integration |
 
@@ -308,12 +329,12 @@ Product outcomes:
 
 Engineering tasks:
 
-- Keep the LLM router output schema strict and versioned.
+- Keep router output and `routingTrace` schema strict and versioned.
 - Add a golden evaluation dataset for supported, unsupported, ambiguous, sensitive, and malicious prompts.
 - Add confidence thresholds per capability risk level.
 - Add offline eval reports before model or prompt changes.
 - Add online telemetry for routing status, confidence, fallback rate, and denial rate.
-- Consider an embedding router later when the capability catalog grows beyond a small number of capabilities.
+- Replace the local semantic vector router with managed embeddings when the capability catalog grows or multilingual routing becomes important.
 
 AWS candidates:
 
@@ -324,7 +345,7 @@ AWS candidates:
 
 Important note:
 
-For the current POC, an LLM structured classifier is sufficient. An embedding semantic router is most useful later when the catalog contains many capabilities and the platform needs cheaper candidate recall before final LLM classification.
+The current POC uses a local semantic router to demonstrate the embedding-router architecture without adding another provider dependency. In production, the same stage can be backed by managed embedding models and a vector index, with the LLM reserved for final adjudication of ambiguous or high-risk cases.
 
 ### Phase 4: Identity, Entitlement, and Consent
 

@@ -409,6 +409,126 @@ pre {
   gap: 16px;
 }
 
+.trace-panel.wide {
+  grid-column: 1 / -1;
+}
+
+.routing-steps {
+  display: grid;
+  gap: 10px;
+}
+
+.routing-step {
+  border: 1px solid #d2ccbd;
+  border-left: 4px solid #8d948f;
+  border-radius: 8px;
+  background: #f6f2e8;
+  padding: 12px;
+}
+
+.routing-step.resolved,
+.routing-step.passed {
+  border-left-color: #1f5f50;
+}
+
+.routing-step.escalated {
+  border-left-color: #976b18;
+}
+
+.routing-step.needs_clarification {
+  border-left-color: #b18316;
+}
+
+.routing-step.unsupported,
+.routing-step.skipped {
+  border-left-color: #6f7772;
+}
+
+.routing-step.denied {
+  border-left-color: #9c2d25;
+}
+
+.routing-step-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.routing-step-head span {
+  color: #25312c;
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.routing-step-head strong {
+  border-radius: 999px;
+  background: #e4decf;
+  color: #39443f;
+  padding: 4px 8px;
+  font-size: 11px;
+  text-transform: uppercase;
+}
+
+.routing-step p {
+  margin: 8px 0 0;
+  color: #58645e;
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.routing-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.routing-meta span {
+  border: 1px solid #d4ccbb;
+  border-radius: 999px;
+  background: #fffaf0;
+  color: #3f4a44;
+  padding: 4px 7px;
+  font-size: 11px;
+  font-weight: 750;
+}
+
+.candidate-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 10px;
+}
+
+.candidate {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 5px 8px;
+  border-top: 1px solid #ddd5c5;
+  padding-top: 7px;
+}
+
+.candidate span {
+  overflow-wrap: anywhere;
+  color: #34413a;
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.candidate strong {
+  color: #1f5f50;
+  font-size: 12px;
+}
+
+.candidate em {
+  grid-column: 1 / -1;
+  color: #667069;
+  font-size: 11px;
+  font-style: normal;
+  line-height: 1.35;
+}
+
 .trace-group {
   border-top: 1px solid #d7d0c0;
   padding-top: 14px;

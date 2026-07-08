@@ -26,7 +26,7 @@ app.get("/health", (_req, res) => {
     service: "gateway",
     status: "ok",
     interface: "real-mcp-server-adapter",
-    intentResolver: isLlmIntentResolverConfigured() ? "llm" : "rules"
+    intentResolver: isLlmIntentResolverConfigured() ? "semantic+llm-adjudication" : "semantic+rules"
   });
 });
 
