@@ -80,6 +80,54 @@ Run the MCP smoke test after starting the mock APIs and gateway:
 pnpm mcp:smoke
 ```
 
+### Claude Code Demo
+
+Build the server, then keep the mock APIs and gateway running:
+
+```bash
+pnpm build
+pnpm --parallel --filter @agent-bridge/mock-apis --filter @agent-bridge/gateway dev
+```
+
+Register the stdio MCP server with Claude Code:
+
+```bash
+claude mcp add --env CAPABILITY_GATEWAY_URL=http://localhost:4100 \
+  --transport stdio --scope local \
+  agent-bridge \
+  -- node /Volumes/sn7100/jerry/code/agent-bridge/apps/mcp-server/dist/server.js
+```
+
+Note: keep `--env` before `--transport` or another option. If `--env` is followed directly by `agent-bridge`, Claude Code may parse the server name as an invalid environment variable.
+
+Check the connection:
+
+```bash
+claude mcp list
+claude mcp get agent-bridge
+```
+
+Open Claude Code and check MCP status:
+
+```bash
+claude
+```
+
+Then run:
+
+```text
+/mcp
+```
+
+Demo prompts:
+
+```text
+Use agent-bridge to list the governed business capabilities.
+Use agent-bridge to assess whether customer C001 can retire at age 62.
+Use agent-bridge to propose increasing customer C001's retirement contribution to 20%.
+Use agent-bridge to access retirement information for C002 while my active customer is C001.
+```
+
 ## LLM-Based Intent Resolution
 
 The gateway uses an OpenAI-compatible LLM API to return a structured resolution:
