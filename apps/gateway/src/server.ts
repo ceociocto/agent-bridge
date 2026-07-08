@@ -104,16 +104,9 @@ app.post("/agent/request", async (req, res, next) => {
       return;
     }
 
-    const parsed = capabilityInvokeSchema.safeParse({
-      customerId: req.body?.customerId,
-      targetRetirementAge: req.body?.targetRetirementAge,
-      desiredContributionRate: req.body?.desiredContributionRate ?? extractPercentage(prompt),
-      plannedIsaSubscription: req.body?.plannedIsaSubscription ?? extractMoneyAfter(prompt, ["isa", "subscribe", "add"]),
-      plannedDrawdownIncome: req.body?.plannedDrawdownIncome ?? extractMoneyAfter(prompt, ["drawdown", "income", "take"]),
-      drawdownGoal: req.body?.drawdownGoal ?? extractDrawdownGoal(prompt),
-      adviserFirmId: req.body?.adviserFirmId,
-      riskProfile: req.body?.riskProfile ?? extractRiskProfile(prompt)
-    });
+    const parsed = capabilityInvokeSchema.safeParse(
+      buildCapabilityInput(capability, req.body ?? {}, prompt)
+    );
     if (!parsed.success) {
       res.status(400).json({ error: "Invalid request input", issues: parsed.error.issues });
       return;
@@ -200,6 +193,43 @@ function extractRiskProfile(prompt: string) {
   if (lower.includes("cautious")) return "cautious" as const;
   if (lower.includes("balanced")) return "balanced" as const;
   return undefined;
+}
+
+type FieldExtractor = (body: Record<string, unknown>, prompt: string) => unknown;
+
+// Only fields declared in the resolved capability's inputSchema are populated.
+// This prevents a money figure intended for one product (e.g. a drawdown income)
+// from being extracted and reinterpreted as a param for a different capability
+// (e.g. plannedIsaSubscription) when the prompt mentions multiple products.
+const fieldExtractors: Record<string, FieldExtractor> = {
+  customerId: (body) => body.customerId,
+  plannedIsaSubscription: (body, prompt) =>
+    body.plannedIsaSubscription ?? extractMoneyAfter(prompt, ["isa", "subscribe", "add"]),
+  plannedDrawdownIncome: (body, prompt) =>
+    body.plannedDrawdownIncome ?? extractMoneyAfter(prompt, ["drawdown", "income", "take"]),
+  drawdownGoal: (body, prompt) => body.drawdownGoal ?? extractDrawdownGoal(prompt),
+  desiredContributionRate: (body, prompt) =>
+    body.desiredContributionRate ?? extractPercentage(prompt),
+  targetRetirementAge: (body) => body.targetRetirementAge,
+  adviserFirmId: (body) => body.adviserFirmId,
+  riskProfile: (body, prompt) => body.riskProfile ?? extractRiskProfile(prompt)
+};
+
+function buildCapabilityInput(
+  capability: NonNullable<ReturnType<typeof getCapability>>,
+  body: Record<string, unknown>,
+  prompt: string
+): Record<string, unknown> {
+  const input: Record<string, unknown> = {};
+  for (const field of Object.keys(capability.inputSchema)) {
+    const extract = fieldExtractors[field];
+    if (!extract) continue;
+    const value = extract(body, prompt);
+    if (value !== undefined && value !== null && value !== "") {
+      input[field] = value;
+    }
+  }
+  return input;
 }
 
 app.get("/audit/:traceId", (req, res) => {

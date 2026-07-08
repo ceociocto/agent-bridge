@@ -41,7 +41,7 @@ export type CapabilityDefinition = {
 
 export type AuditStep = {
   name: string;
-  status: "passed" | "completed" | "requires_confirmation";
+  status: "passed" | "completed" | "requires_confirmation" | "denied";
   detail: string;
 };
 

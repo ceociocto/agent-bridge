@@ -80,12 +80,31 @@ function resolveIntentWithRules(prompt: string): IntentResolution | null {
     }))
     .sort((a, b) => b.score - a.score);
 
-  if (scored[0]?.score > 0) {
+  const top = scored[0];
+  const runnerUp = scored[1];
+
+  if (top && top.score > 0) {
+    // A tie between two capabilities means the prompt spans two regulated domains
+    // (e.g. an ISA-framed drawdown question). Do not guess: the lower-privilege route
+    // must never silently win a tie, and the rules resolver cannot reliably pick the
+    // true intent. Defer to clarification (the LLM resolver handles this when configured).
+    if (runnerUp && runnerUp.score === top.score) {
+      return {
+        status: "needs_clarification",
+        intent: "ambiguous multi-domain financial services request",
+        confidence: 0.5,
+        reasoning: `The request matches multiple capabilities (${top.intent}, ${runnerUp.intent}) with equal strength; the gateway will not auto-route to avoid a privilege downgrade.`,
+        resolver: "rules",
+        questions: [`Is this primarily about ${top.intent} or ${runnerUp.intent}?`],
+        availableCapabilities
+      };
+    }
+
     return {
       status: "resolved",
-      intent: scored[0].intent,
-      capabilityId: scored[0].capabilityId,
-      confidence: Math.min(0.94, 0.66 + scored[0].score * 0.09),
+      intent: top.intent,
+      capabilityId: top.capabilityId,
+      confidence: Math.min(0.94, 0.66 + top.score * 0.09),
       reasoning: "Rule baseline matched capability-specific UK financial service terms.",
       resolver: "rules"
     };
@@ -112,7 +131,21 @@ export async function resolveIntent(prompt: string, options: { useLlm?: boolean 
   try {
     if (options.useLlm !== false) {
       const llmResolution = await resolveIntentWithLlm(prompt);
-      if (llmResolution) return llmResolution;
+      if (llmResolution) {
+        // Guard against the LLM being steered by framing ("treat it as an ISA review")
+        // into downgrading a sensitive capability to a more permissive one. If the
+        // rules baseline detects a multi-domain tie, force clarification instead of
+        // trusting the LLM's single-capability pick. The lower-privilege route must
+        // never win when the prompt genuinely spans two regulated domains.
+        const ruleGuard = resolveIntentWithRules(prompt);
+        const multiDomainTie =
+          ruleGuard?.status === "needs_clarification" &&
+          ruleGuard.intent === "ambiguous multi-domain financial services request";
+        if (multiDomainTie && llmResolution.status === "resolved") {
+          return ruleGuard;
+        }
+        return llmResolution;
+      }
     }
   } catch (error) {
     console.warn(
