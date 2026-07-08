@@ -135,6 +135,14 @@ Purpose:
 Expose the governed capability gateway through the real Model Context Protocol.
 ```
 
+Implementation:
+
+```text
+MCP TypeScript SDK v2 beta split packages:
+- @modelcontextprotocol/server
+- @modelcontextprotocol/client for smoke verification
+```
+
 Transport:
 
 ```text

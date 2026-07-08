@@ -27,7 +27,7 @@ The important idea is that the agent does not receive unrestricted backend API a
 | `apps/mock-apis` | `4101` | Simulates existing enterprise value stream APIs. |
 | `apps/gateway` | `4100` | Capability gateway, intent resolver, policy checks, and composition layer. |
 | `apps/demo-web` | `4102` | Simulates a user agent connecting to the gateway. |
-| `apps/mcp-server` | stdio | Real MCP server that exposes the gateway through MCP tools and resources. |
+| `apps/mcp-server` | stdio | Real MCP server, built on the MCP TypeScript SDK v2 beta, that exposes the gateway through MCP tools and resources. |
 
 ## Run
 
@@ -46,7 +46,7 @@ If `4102` is already in use, Vite will print the alternate local URL.
 
 ## MCP Server
 
-The POC includes a real stdio MCP server in `apps/mcp-server`. It acts as a protocol adapter over the governed capability gateway, so MCP clients get the same intent routing, policy checks, composition, and audit behavior as the HTTP demo.
+The POC includes a real stdio MCP server in `apps/mcp-server`, migrated to the split MCP TypeScript SDK v2 beta packages. It acts as a protocol adapter over the governed capability gateway, so MCP clients get the same intent routing, policy checks, composition, and audit behavior as the HTTP demo.
 
 Start the mock APIs and gateway first:
 

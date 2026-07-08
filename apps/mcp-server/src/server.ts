@@ -1,5 +1,5 @@
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { McpServer } from "@modelcontextprotocol/server";
+import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod/v4";
 import { capabilityIds, type CapabilityId } from "@agent-bridge/shared";
 import { gatewayClient, getGatewayBaseUrl } from "./gatewayClient.js";
@@ -105,9 +105,9 @@ export function createServer() {
     {
       title: "Resolve Financial Intent",
       description: "Resolve a natural-language user request to a published Agent-Bridge capability.",
-      inputSchema: {
+      inputSchema: z.object({
         prompt: z.string().min(1).describe("The user request to classify.")
-      },
+      }),
       annotations: {
         readOnlyHint: true,
         openWorldHint: false
@@ -128,12 +128,12 @@ export function createServer() {
       title: "Invoke Governed Capability",
       description:
         "Invoke a specific governed capability after the caller has selected it and supplied scoped customer input.",
-      inputSchema: {
+      inputSchema: z.object({
         capabilityId: capabilityIdSchema.describe("Published Agent-Bridge capability id."),
         customerId: z.string().min(1).describe("Customer id in the active request context."),
         targetRetirementAge: z.number().int().min(50).max(75).optional(),
         desiredContributionRate: z.number().min(0).max(100).optional()
-      },
+      }),
       annotations: {
         readOnlyHint: false,
         openWorldHint: false
@@ -160,12 +160,12 @@ export function createServer() {
       title: "Handle Agent Request",
       description:
         "Run the full Agent-Bridge flow: intent resolution, policy checks, capability composition, and audit-friendly response.",
-      inputSchema: {
+      inputSchema: z.object({
         prompt: z.string().min(1).describe("The user's natural-language request."),
         customerId: z.string().min(1).describe("Customer id in the active request context."),
         targetRetirementAge: z.number().int().min(50).max(75).optional(),
         desiredContributionRate: z.number().min(0).max(100).optional()
-      },
+      }),
       annotations: {
         readOnlyHint: false,
         openWorldHint: false
@@ -191,9 +191,7 @@ export function createServer() {
 }
 
 async function main() {
-  const server = createServer();
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
+  await serveStdio(createServer);
   console.error(`Agent-Bridge MCP server connected over stdio; gateway=${getGatewayBaseUrl()}`);
 }
 

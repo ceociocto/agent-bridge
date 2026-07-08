@@ -12,8 +12,9 @@
   },
   "dependencies": {
     "@agent-bridge/shared": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "zod": "^3.25.67"
+    "@modelcontextprotocol/client": "2.0.0-beta.2",
+    "@modelcontextprotocol/server": "2.0.0-beta.2",
+    "zod": "^4.2.0"
   },
   "devDependencies": {
     "tsx": "^4.20.3",
