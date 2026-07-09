@@ -1,8 +1,10 @@
 import { capabilityIds, type CapabilityId, type IntentResolution, type IntentRoutingStep } from "@agent-bridge/shared";
 import { resolveIntentWithLlm } from "./llmIntentResolver.js";
+import { createPiiGuardProvider } from "./piiGuard.js";
 import { getSemanticThresholds, routeIntentSemantically } from "./semanticIntentRouter.js";
 
 const availableCapabilities = [...capabilityIds];
+const piiGuardProvider = createPiiGuardProvider();
 
 type RuleMatch = {
   capabilityId: CapabilityId;
@@ -62,36 +64,6 @@ function resolveIntentWithConservativeFallback(routingTrace: IntentRoutingStep[]
       }
     ]
   );
-}
-
-function policyDeny(prompt: string): IntentResolution | null {
-  const lower = prompt.toLowerCase();
-  const sensitivePatterns = [
-    "national insurance",
-    "ni number",
-    "full account number",
-    "sort code",
-    "passport",
-    "password",
-    "credential",
-    "tax identifier",
-    "raw pii"
-  ];
-
-  if (!sensitivePatterns.some((pattern) => lower.includes(pattern))) return null;
-
-  return {
-    status: "denied",
-    intent: "sensitive identifier disclosure",
-    confidence: 0.98,
-    reasoning: "The request asks for regulated identifiers beyond the data-minimized capability contract.",
-    resolver: "rules",
-    policyDecision: {
-      name: "data_minimization",
-      status: "requires_confirmation",
-      detail: "The gateway can provide redacted account context or a review summary, not raw regulated identifiers."
-    }
-  };
 }
 
 function scoreRules(prompt: string) {
@@ -179,22 +151,36 @@ function isSemanticRouterEnabled() {
 export async function resolveIntent(prompt: string, options: { useLlm?: boolean } = {}): Promise<IntentResolution> {
   const routingTrace: IntentRoutingStep[] = [];
 
-  const denied = policyDeny(prompt);
-  if (denied) {
-    return withTrace(denied, [
+  const piiDecision = await piiGuardProvider.analyze(prompt);
+  if (piiDecision.status === "denied") {
+    return withTrace(
       {
-        layer: "policy_guard",
         status: "denied",
-        detail: denied.reasoning,
-        confidence: denied.confidence
-      }
-    ]);
+        intent: "sensitive identifier disclosure",
+        confidence: piiDecision.confidence,
+        reasoning: piiDecision.reasoning,
+        resolver: "rules",
+        policyDecision: piiDecision.policyDecision
+      },
+      [
+        {
+          layer: "policy_guard",
+          status: "denied",
+          detail: `${piiDecision.reasoning} Detected entities: ${
+            piiDecision.detectedEntities.length ? piiDecision.detectedEntities.join(", ") : "none"
+          }.`,
+          confidence: piiDecision.confidence
+        }
+      ]
+    );
   }
 
   routingTrace.push({
     layer: "policy_guard",
     status: "passed",
-    detail: "No sensitive identifier disclosure pattern matched."
+    detail: piiDecision.detectedEntities.length
+      ? `${piiDecision.reasoning} Observed entities: ${piiDecision.detectedEntities.join(", ")}.`
+      : piiDecision.reasoning
   });
 
   const ruleGuard = resolveRulesGuard(prompt);

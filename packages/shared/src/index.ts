@@ -31,6 +31,13 @@ export type CapabilityDefinition = {
   businessOutcome: string;
   requiredApis: string[];
   inputSchema: Record<string, unknown>;
+  routing: {
+    domains: string[];
+    keywords: string[];
+    positiveExamples: string[];
+    negativeExamples: string[];
+    riskLevel: "low" | "medium" | "high";
+  };
   policy: {
     dataAccess: "read" | "analysis" | "recommendation";
     requiresCustomerConfirmation: boolean;

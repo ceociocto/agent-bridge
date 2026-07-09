@@ -13,6 +13,22 @@ export const capabilities: CapabilityDefinition[] = [
       customerId: "string",
       plannedIsaSubscription: "number optional"
     },
+    routing: {
+      domains: ["personal investing", "isa", "stocks and shares isa", "retail investment"],
+      keywords: ["isa", "stocks and shares", "investment account", "tax wrapper", "cash drag", "allowance"],
+      positiveExamples: [
+        "How much of my ISA allowance do I have left this tax year?",
+        "Can I add 8000 pounds to my Fidelity Stocks and Shares ISA?",
+        "Review this client's ISA usage and cash drag.",
+        "Check whether my planned ISA subscription fits the annual allowance."
+      ],
+      negativeExamples: [
+        "Can I take income from my SIPP drawdown account?",
+        "Should I raise my workplace pension contribution?",
+        "Prepare an adviser model portfolio drift review."
+      ],
+      riskLevel: "medium"
+    },
     policy: {
       dataAccess: "analysis",
       requiresCustomerConfirmation: false,
@@ -42,6 +58,22 @@ export const capabilities: CapabilityDefinition[] = [
       customerId: "string",
       plannedDrawdownIncome: "number optional",
       drawdownGoal: "string optional"
+    },
+    routing: {
+      domains: ["sipp", "retirement", "drawdown", "pension income"],
+      keywords: ["sipp", "drawdown", "investment pathway", "pathways", "mpaa", "taxable pension", "take income"],
+      positiveExamples: [
+        "Can I take 18000 pounds a year from my SIPP drawdown account?",
+        "Which investment pathway fits if I want income within five years?",
+        "Review the MPAA risk before I draw taxable pension income.",
+        "Is my planned pension drawdown income sustainable?"
+      ],
+      negativeExamples: [
+        "How much ISA allowance do I have left?",
+        "Am I missing employer match in my workplace pension?",
+        "Create a model portfolio evidence pack for an adviser review."
+      ],
+      riskLevel: "high"
     },
     policy: {
       dataAccess: "recommendation",
@@ -73,6 +105,22 @@ export const capabilities: CapabilityDefinition[] = [
       desiredContributionRate: "number optional",
       targetRetirementAge: "number optional"
     },
+    routing: {
+      domains: ["workplace investing", "workplace pension", "contributions", "employer benefits"],
+      keywords: ["workplace", "employer match", "salary sacrifice", "pension contribution", "contribution rate"],
+      positiveExamples: [
+        "Should I raise my workplace pension contribution to 10 percent?",
+        "Am I missing any employer match in my workplace pension?",
+        "Show the retirement impact of increasing contributions through salary sacrifice.",
+        "Help me understand my workplace pension contribution choices."
+      ],
+      negativeExamples: [
+        "Can I subscribe more money into my ISA?",
+        "Can I withdraw taxable pension income from my SIPP?",
+        "Does this advised client still match the balanced model portfolio?"
+      ],
+      riskLevel: "high"
+    },
     policy: {
       dataAccess: "recommendation",
       requiresCustomerConfirmation: true,
@@ -102,6 +150,22 @@ export const capabilities: CapabilityDefinition[] = [
       customerId: "string",
       adviserFirmId: "string optional",
       riskProfile: "string optional"
+    },
+    routing: {
+      domains: ["adviser solutions", "adviser platform", "model portfolio", "suitability review"],
+      keywords: ["adviser", "advisor", "model portfolio", "suitability", "drift", "review pack", "wealthbuilder"],
+      positiveExamples: [
+        "Prepare a model portfolio drift review for this advised client.",
+        "Does this client still match the balanced model portfolio?",
+        "Create an adviser platform evidence pack for the next review meeting.",
+        "Check suitability and drift for a client on the adviser platform."
+      ],
+      negativeExamples: [
+        "How much ISA allowance does this retail investor have left?",
+        "Should this workplace pension member raise contributions?",
+        "Can this SIPP customer take drawdown income?"
+      ],
+      riskLevel: "medium"
     },
     policy: {
       dataAccess: "analysis",
