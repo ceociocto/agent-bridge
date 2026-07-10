@@ -34,7 +34,15 @@ async function main() {
   await client.connect(transport);
 
   const tools = await client.listTools();
-  const requiredTools = ["list_capabilities", "resolve_intent", "invoke_capability", "agent_request"];
+  const requiredTools = [
+    "list_capabilities",
+    "resolve_intent",
+    "invoke_capability",
+    "agent_request",
+    "open_agent_bridge_app",
+    "list_demo_scenarios",
+    "run_demo_scenario"
+  ];
   for (const toolName of requiredTools) {
     if (!tools.tools.some((tool) => tool.name === toolName)) {
       throw new Error(`Missing MCP tool: ${toolName}`);
@@ -42,7 +50,12 @@ async function main() {
   }
 
   const resources = await client.listResources();
-  const requiredResources = ["agent-bridge://gateway/health", "agent-bridge://capabilities"];
+  const requiredResources = [
+    "agent-bridge://gateway/health",
+    "agent-bridge://capabilities",
+    "agent-bridge://demo/scenarios",
+    "ui://agent-bridge/app.html"
+  ];
   for (const uri of requiredResources) {
     if (!resources.resources.some((resource) => resource.uri === uri)) {
       throw new Error(`Missing MCP resource: ${uri}`);
@@ -50,6 +63,8 @@ async function main() {
   }
 
   await client.readResource({ uri: "agent-bridge://capabilities" });
+  await client.readResource({ uri: "agent-bridge://demo/scenarios" });
+  await client.readResource({ uri: "ui://agent-bridge/app.html" });
 
   const listResult = await client.callTool({
     name: "list_capabilities",
@@ -76,6 +91,36 @@ async function main() {
     }
   });
   if (agentResult.isError) throw new Error(`agent_request failed: ${JSON.stringify(agentResult)}`);
+
+  const appResult = await client.callTool({
+    name: "open_agent_bridge_app",
+    arguments: {}
+  });
+  if (appResult.isError) throw new Error(`open_agent_bridge_app failed: ${JSON.stringify(appResult)}`);
+
+  const scenariosResult = await client.callTool({
+    name: "list_demo_scenarios",
+    arguments: {}
+  });
+  if (scenariosResult.isError) throw new Error(`list_demo_scenarios failed: ${JSON.stringify(scenariosResult)}`);
+
+  const scenarioResult = await client.callTool({
+    name: "run_demo_scenario",
+    arguments: {
+      scenarioId: "isa-allowance-chart"
+    }
+  });
+  if (scenarioResult.isError) throw new Error(`run_demo_scenario failed: ${JSON.stringify(scenarioResult)}`);
+
+  const simpleChartResult = await client.callTool({
+    name: "run_demo_scenario",
+    arguments: {
+      scenarioId: "simple-chart"
+    }
+  });
+  if (simpleChartResult.isError) {
+    throw new Error(`simple chart scenario failed: ${JSON.stringify(simpleChartResult)}`);
+  }
 
   await client.close();
 

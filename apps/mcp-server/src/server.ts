@@ -1,13 +1,33 @@
 import { McpServer } from "@modelcontextprotocol/server";
 import { serveStdio } from "@modelcontextprotocol/server/stdio";
 import { z } from "zod/v4";
-import { capabilityIds, type CapabilityId } from "@agent-bridge/shared";
+import {
+  capabilityIds,
+  demoScenarios,
+  getDemoScenario,
+  type CapabilityId
+} from "@agent-bridge/shared";
+import { appResourceUri, renderAppWidgetHtml } from "./appWidget.js";
 import { gatewayClient, getGatewayBaseUrl } from "./gatewayClient.js";
 
 const capabilityIdSchema = z.enum([...capabilityIds] as [CapabilityId, ...CapabilityId[]]);
+const demoScenarioIdSchema = z.enum(
+  demoScenarios.map((scenario) => scenario.id) as [string, ...string[]]
+);
+const appToolTemplateMeta = {
+  _meta: {
+    ui: {
+      resourceUri: appResourceUri,
+      visibility: ["model", "app"]
+    },
+    "openai/outputTemplate": appResourceUri,
+    "openai/widgetAccessible": true
+  }
+};
 
 function jsonText(value: unknown) {
   return {
+    structuredContent: value,
     content: [
       {
         type: "text" as const,
@@ -81,6 +101,56 @@ export function createServer() {
     })
   );
 
+  server.registerResource(
+    "demo-scenarios",
+    "agent-bridge://demo/scenarios",
+    {
+      title: "Demo Scenarios",
+      description:
+        "Curated Agent-Bridge MCP app scenarios covering routing, governance, charts, and confirmation gates.",
+      mimeType: "application/json"
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "application/json",
+          text: JSON.stringify({ scenarios: demoScenarios }, null, 2)
+        }
+      ]
+    })
+  );
+
+  server.registerResource(
+    "agent-bridge-app",
+    appResourceUri,
+    {
+      title: "Agent-Bridge MCP App",
+      description: "Interactive MCP app for governed financial agent scenarios.",
+      mimeType: "text/html"
+    },
+    async (uri) => ({
+      contents: [
+        {
+          uri: uri.href,
+          mimeType: "text/html",
+          text: renderAppWidgetHtml(),
+          _meta: {
+            ui: {
+              prefersBorder: true,
+              csp: {
+                connectDomains: [],
+                resourceDomains: []
+              }
+            },
+            "openai/widgetDescription":
+              "A compact Agent-Bridge card widget that renders the core scenario component only."
+          }
+        }
+      ]
+    })
+  );
+
   server.registerTool(
     "list_capabilities",
     {
@@ -94,6 +164,137 @@ export function createServer() {
     async () => {
       try {
         return jsonText(await gatewayClient.capabilities());
+      } catch (error) {
+        return toolError(error);
+      }
+    }
+  );
+
+  server.registerTool(
+    "open_agent_bridge_app",
+    {
+      title: "Open Agent-Bridge App",
+      description:
+        "Open the interactive Agent-Bridge MCP app with scenario demos for governed financial agent interactions.",
+      inputSchema: z.object({
+        scenarioId: demoScenarioIdSchema.optional().describe("Optional scenario to preselect.")
+      }),
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false
+      },
+      ...appToolTemplateMeta,
+      _meta: {
+        ...appToolTemplateMeta._meta,
+        "openai/toolInvocation/invoking": "Opening Agent-Bridge",
+        "openai/toolInvocation/invoked": "Agent-Bridge ready"
+      }
+    },
+    async ({ scenarioId }) => {
+      const activeScenario = scenarioId ? getDemoScenario(scenarioId) : demoScenarios[0];
+      return jsonText({
+        app: {
+          name: "Agent-Bridge",
+          resourceUri: appResourceUri
+        },
+        activeScenarioId: activeScenario?.id ?? demoScenarios[0].id,
+        scenarios: demoScenarios
+      });
+    }
+  );
+
+  server.registerTool(
+    "list_demo_scenarios",
+    {
+      title: "List Agent-Bridge Demo Scenarios",
+      description:
+        "List curated demo scenarios that exercise MCP tools, app UI components, routing, policy, and audit behavior.",
+      annotations: {
+        readOnlyHint: true,
+        openWorldHint: false
+      },
+      ...appToolTemplateMeta,
+      _meta: {
+        ...appToolTemplateMeta._meta,
+        ui: { visibility: ["model", "app"] },
+        "openai/widgetAccessible": true,
+        "openai/toolInvocation/invoking": "Loading scenarios",
+        "openai/toolInvocation/invoked": "Scenarios loaded"
+      }
+    },
+    async () => jsonText({ scenarios: demoScenarios })
+  );
+
+  server.registerTool(
+    "run_demo_scenario",
+    {
+      title: "Run Agent-Bridge Demo Scenario",
+      description:
+        "Execute a curated Agent-Bridge scenario through the gateway and return structured data for app components.",
+      inputSchema: z.object({
+        scenarioId: demoScenarioIdSchema.describe("Curated demo scenario id.")
+      }),
+      annotations: {
+        readOnlyHint: false,
+        openWorldHint: false,
+        idempotentHint: true
+      },
+      ...appToolTemplateMeta,
+      _meta: {
+        ...appToolTemplateMeta._meta,
+        "openai/toolInvocation/invoking": "Running scenario",
+        "openai/toolInvocation/invoked": "Scenario complete"
+      }
+    },
+    async ({ scenarioId }) => {
+      try {
+        const scenario = getDemoScenario(scenarioId);
+        if (!scenario) throw new Error(`Unknown demo scenario: ${scenarioId}`);
+
+        if (scenario.executionMode === "static") {
+          return jsonText({
+            scenario,
+            response: {
+              resolution: {
+                status: scenario.expectedStatus,
+                intent: scenario.title,
+                confidence: 1,
+                reasoning: scenario.narrative,
+                resolver: "rules"
+              },
+              result: {
+                summary: scenario.narrative,
+                chart: scenario.chart
+              }
+            },
+            audit: null,
+            app: {
+              components: scenario.components,
+              interactionPattern: scenario.interactionPattern,
+              expectedSignals: scenario.expectedSignals,
+              compact: true
+            }
+          });
+        }
+
+        const response = await gatewayClient.agentRequest({
+          prompt: scenario.prompt,
+          ...scenario.input
+        });
+        const audit = response.result?.audit_trace_id
+          ? await gatewayClient.audit(response.result.audit_trace_id).catch(() => null)
+          : null;
+
+        return jsonText({
+          scenario,
+          response,
+          audit,
+          app: {
+            components: scenario.components,
+            interactionPattern: scenario.interactionPattern,
+            expectedSignals: scenario.expectedSignals
+          }
+        });
       } catch (error) {
         return toolError(error);
       }

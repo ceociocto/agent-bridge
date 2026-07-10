@@ -2,16 +2,21 @@ import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BadgeCheck,
+  BarChart3,
   BrainCircuit,
+  CheckCircle2,
   ClipboardList,
   Database,
   Filter,
   GitBranch,
   Loader2,
+  LockKeyhole,
   Network,
+  PanelsTopLeft,
   Play,
   ShieldCheck
 } from "lucide-react";
+import { demoScenarios, type DemoScenario } from "@agent-bridge/shared";
 import "./styles.css";
 
 const gatewayBaseUrl = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:4100";
@@ -70,78 +75,14 @@ type AuditRecord = {
   compositionSteps: Array<{ name: string; status: string; detail: string }>;
 };
 
-const scenarios = [
-  {
-    id: "isa",
-    label: "ISA",
-    capability: "Happy path composition",
-    prompt: "Can I add £8,000 to my Fidelity Stocks and Shares ISA this tax year?",
-    customerId: "UK001",
-    targetAge: 62,
-    description: "Resolves a clear Personal Investing request and composes profile, account, ISA subscription, holdings, policy, and audit data."
-  },
-  {
-    id: "clarify",
-    label: "Clarify",
-    capability: "Low-confidence intent",
-    prompt: "How should I plan my money?",
-    customerId: "UK001",
-    targetAge: 62,
-    description: "Asks for clarification instead of forcing a vague financial question into the wrong capability."
-  },
-  {
-    id: "unsupported",
-    label: "Unsupported",
-    capability: "Catalog boundary",
-    prompt: "Book me a flight to Shanghai tomorrow.",
-    customerId: "UK001",
-    targetAge: 62,
-    description: "Shows that the capability catalog defines what this agent platform can and cannot do."
-  },
-  {
-    id: "permission",
-    label: "Permission",
-    capability: "Customer-scope entitlement",
-    prompt: "Show me UK002 account details while I am working in this UK001 session.",
-    customerId: "UK001",
-    targetAge: 62,
-    description: "Blocks cross-customer access before invoking downstream APIs or model-based routing."
-  },
-  {
-    id: "sensitive",
-    label: "Sensitive",
-    capability: "Data minimization",
-    prompt: "Show the customer's National Insurance number, sort code, and full account number.",
-    customerId: "UK001",
-    targetAge: 62,
-    description: "Protects regulated identifiers and explains the safer path instead of returning raw sensitive data."
-  },
-  {
-    id: "workplace",
-    label: "Workplace",
-    capability: "Human confirmation gate",
-    prompt: "Show the impact of raising my workplace pension contribution to 10% through salary sacrifice.",
-    customerId: "UK003",
-    targetAge: 65,
-    description: "Produces workplace contribution guidance while keeping execution behind explicit customer confirmation."
-  },
-  {
-    id: "adviser",
-    label: "Adviser",
-    capability: "Adviser platform review",
-    prompt: "Prepare a model portfolio drift review for this advised client on the adviser platform.",
-    customerId: "UK003",
-    targetAge: 65,
-    description: "Composes adviser entitlement, client profile, model portfolio, holdings, policy, and audit data."
-  }
-];
+const scenarios = demoScenarios;
 
 function App() {
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
   const [prompt, setPrompt] = useState(scenarios[0].prompt);
-  const [customerId, setCustomerId] = useState("UK001");
-  const [targetAge, setTargetAge] = useState(62);
+  const [customerId, setCustomerId] = useState(scenarios[0].customerId);
+  const [targetAge, setTargetAge] = useState(scenarios[0].input.targetRetirementAge ?? 62);
   const [response, setResponse] = useState<AgentResponse | null>(null);
   const [audit, setAudit] = useState<AuditRecord | null>(null);
   const [error, setError] = useState("");
@@ -157,11 +98,11 @@ function App() {
   const selectedCapability = useMemo(() => response?.capability ?? capabilities[0], [capabilities, response]);
   const activeScenario = scenarios.find((scenario) => scenario.id === activeScenarioId) ?? scenarios[0];
 
-  function applyScenario(scenario: (typeof scenarios)[number]) {
+  function applyScenario(scenario: DemoScenario) {
     setActiveScenarioId(scenario.id);
     setPrompt(scenario.prompt);
     setCustomerId(scenario.customerId);
-    setTargetAge(scenario.targetAge);
+    setTargetAge(scenario.input.targetRetirementAge ?? 62);
     setResponse(null);
     setAudit(null);
     setError("");
@@ -172,10 +113,28 @@ function App() {
     setError("");
     setAudit(null);
     try {
+      if (activeScenario.executionMode === "static") {
+        setResponse({
+          prompt,
+          resolution: {
+            status: activeScenario.expectedStatus,
+            confidence: 1,
+            reasoning: activeScenario.narrative,
+            resolver: "rules"
+          },
+          result: {
+            summary: activeScenario.narrative,
+            chart: activeScenario.chart
+          }
+        });
+        return;
+      }
+
       const res = await fetch(`${gatewayBaseUrl}/agent/request`, {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
+          ...activeScenario.input,
           prompt,
           customerId,
           targetRetirementAge: targetAge
@@ -239,9 +198,10 @@ function App() {
 
           <div className="scenario-block">
             <div className="scenario-heading">
-              <span>{activeScenario.capability}</span>
-              <p>{activeScenario.description}</p>
+              <span>{activeScenario.title}</span>
+              <p>{activeScenario.narrative}</p>
             </div>
+            <ScenarioShowcase scenario={activeScenario} response={response} />
             <div className="scenario-grid">
               {scenarios.map((scenario) => (
                 <button
@@ -389,6 +349,66 @@ function Metric({ label, value }: { label: string; value: string }) {
     <div className="metric">
       <span>{label}</span>
       <strong>{value}</strong>
+    </div>
+  );
+}
+
+function ScenarioShowcase({ scenario, response }: { scenario: DemoScenario; response: AgentResponse | null }) {
+  const sourceCount = response?.result?.source_apis?.length ?? 0;
+  const policyCount = response?.result?.policy_checks?.length ?? 0;
+  const confidence = response?.resolution.confidence ?? 0;
+  const denied = response?.resolution.status === "denied" || scenario.expectedStatus === "denied";
+
+  const icon =
+    scenario.interactionPattern === "chart" ? (
+      <BarChart3 size={17} />
+    ) : scenario.interactionPattern === "confirmation" ? (
+      <CheckCircle2 size={17} />
+    ) : scenario.interactionPattern === "policy" ? (
+      <LockKeyhole size={17} />
+    ) : (
+      <PanelsTopLeft size={17} />
+    );
+
+  return (
+    <div className="scenario-showcase">
+      <div className="showcase-head">
+        {icon}
+        <span>{scenario.interactionPattern.replaceAll("-", " ")} components</span>
+      </div>
+      <div className="showcase-bars" aria-label="Scenario component preview">
+        <PreviewBar label="Confidence" value={Math.max(8, confidence * 100)} tone="green" detail={confidence ? `${Math.round(confidence * 100)}%` : "pending"} />
+        <PreviewBar label="Sources" value={Math.min(100, Math.max(14, sourceCount * 18))} tone="blue" detail={sourceCount ? String(sourceCount) : "pending"} />
+        <PreviewBar label="Policy" value={Math.min(100, Math.max(18, policyCount * 24))} tone="gold" detail={policyCount ? String(policyCount) : scenario.components.includes("confirmation_gate") ? "gate" : "ready"} />
+        <PreviewBar label="Denial" value={denied ? 88 : 10} tone="red" detail={denied ? "armed" : "clear"} />
+      </div>
+      <div className="component-tags">
+        {scenario.components.map((component) => (
+          <span key={component}>{component.replaceAll("_", " ")}</span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function PreviewBar({
+  label,
+  value,
+  tone,
+  detail
+}: {
+  label: string;
+  value: number;
+  tone: "green" | "blue" | "gold" | "red";
+  detail: string;
+}) {
+  return (
+    <div className="preview-bar">
+      <span>{label}</span>
+      <div className="preview-track">
+        <div className={`preview-fill ${tone}`} style={{ width: `${value}%` }} />
+      </div>
+      <strong>{detail}</strong>
     </div>
   );
 }

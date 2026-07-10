@@ -71,8 +71,10 @@ Set `CAPABILITY_GATEWAY_URL` if the gateway is not running at `http://localhost:
 
 The MCP server exposes:
 
-- resources: `agent-bridge://gateway/health`, `agent-bridge://capabilities`
-- tools: `list_capabilities`, `resolve_intent`, `invoke_capability`, `agent_request`
+- resources: `agent-bridge://gateway/health`, `agent-bridge://capabilities`, `agent-bridge://demo/scenarios`, `ui://agent-bridge/app.html`
+- tools: `list_capabilities`, `resolve_intent`, `invoke_capability`, `agent_request`, `open_agent_bridge_app`, `list_demo_scenarios`, `run_demo_scenario`
+
+The app-specific resources and tools are still plain MCP, so clients such as Claude Code, Copilot-compatible MCP clients, and other agents can inspect and run the scenarios as structured data. Clients that support MCP Apps / Apps SDK-style UI templates can also render `ui://agent-bridge/app.html`, a compact card widget that shows only the core component for the current scenario.
 
 Run the MCP smoke test after starting the synthetic value stream APIs and gateway:
 
@@ -129,6 +131,36 @@ Use agent-bridge to assess whether UK003 captures the full workplace pension emp
 Use agent-bridge to prepare a model portfolio drift review for advised client UK003.
 Use agent-bridge to access information for UK002 while my active customer is UK001.
 ```
+
+### MCP Apps Demo
+
+The first app-enabled version keeps the existing stdio MCP transport and adds an app UI template plus structured scenario tools. In a generic MCP client, run:
+
+```text
+Use agent-bridge to open the Agent-Bridge app.
+Use agent-bridge to list demo scenarios.
+Use agent-bridge to run the ISA allowance chart scenario.
+Use agent-bridge to run the SIPP confirmation gate scenario.
+Use agent-bridge to run the cross-customer entitlement denial scenario.
+```
+
+Supported scenario ids:
+
+```text
+simple-chart
+isa-allowance-chart
+sipp-confirmation-gate
+workplace-projection
+adviser-drift-review
+clarify-routing
+unsupported-boundary
+scope-denial
+sensitive-data-minimization
+```
+
+Use `simple-chart` first when validating MCP app rendering in a new client. It returns a compact static bar chart payload and does not invoke the gateway or value-stream APIs. The widget intentionally renders only the chart card; trace, audit, and backend management views are left to a separate admin surface.
+
+The scenario runner returns structured content with the scenario definition, gateway response, optional audit record, expected signals, and component hints. Apps-capable clients should render only the primary scenario component in conversation; trace and audit payloads are for future management tooling.
 
 ## Layered Intent Routing
 

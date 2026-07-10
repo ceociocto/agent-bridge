@@ -17,6 +17,9 @@ importers:
 
   apps/demo-web:
     dependencies:
+      '@agent-bridge/shared':
+        specifier: workspace:*
+        version: link:../../packages/shared
       '@vitejs/plugin-react':
         specifier: ^4.3.1
         version: 4.7.0(vite@5.4.21(@types/node@24.13.2))

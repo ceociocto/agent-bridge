@@ -54,6 +54,7 @@ async function requestJson<T>(path: string, init?: RequestInit): Promise<T> {
 export const gatewayClient = {
   health: () => requestJson<GatewayHealth>("/health"),
   capabilities: () => requestJson<CapabilityListResponse>("/capabilities"),
+  audit: (traceId: string) => requestJson<unknown>(`/audit/${encodeURIComponent(traceId)}`),
   resolveIntent: (prompt: string) =>
     requestJson<IntentResolution>("/intent/resolve", {
       method: "POST",

@@ -21,6 +21,28 @@ const port = Number(process.env.PORT ?? 4100);
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (_req, res) => {
+  res.json({
+    service: "gateway",
+    status: "ok",
+    message: "Agent-Bridge capability gateway is running.",
+    endpoints: {
+      health: "/health",
+      capabilities: "/capabilities",
+      resolveIntent: "POST /intent/resolve",
+      agentRequest: "POST /agent/request",
+      invokeCapability: "POST /capabilities/:capabilityId/invoke",
+      audit: "/audit/:traceId"
+    },
+    demo: "http://localhost:4102",
+    mcp: {
+      transport: "stdio",
+      server: "apps/mcp-server/dist/server.js",
+      appResource: "ui://agent-bridge/app.html"
+    }
+  });
+});
+
 app.get("/health", (_req, res) => {
   res.json({
     service: "gateway",

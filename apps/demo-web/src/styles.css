@@ -1,5 +1,6 @@
 :root {
   color-scheme: light;
+  --ease-out-expo: cubic-bezier(0.16, 1, 0.3, 1);
   font-family:
     "Aptos",
     "Segoe UI",
@@ -30,6 +31,16 @@ input {
 .shell {
   min-height: 100vh;
   padding: 28px;
+  opacity: 0;
+  transform: translateY(12px);
+  animation: page-arrive 780ms var(--ease-out-expo) 80ms forwards;
+}
+
+@keyframes page-arrive {
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .masthead {
@@ -90,6 +101,28 @@ h1 {
 .trace-panel {
   border: 1px solid #cbc5b7;
   background: #fbfaf5;
+  animation: panel-arrive 680ms var(--ease-out-expo) both;
+}
+
+.capability-band {
+  animation-delay: 80ms;
+}
+
+.response-main,
+.trace-panel {
+  animation-delay: 140ms;
+}
+
+@keyframes panel-arrive {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 .agent-console {
@@ -172,6 +205,104 @@ input:focus {
   line-height: 1.42;
 }
 
+.scenario-showcase {
+  display: grid;
+  gap: 11px;
+  border: 1px solid #d1c6b2;
+  background:
+    linear-gradient(135deg, rgba(31, 95, 80, 0.08), transparent 44%),
+    #fffaf0;
+  padding: 12px;
+}
+
+.showcase-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: #26312c;
+  font-size: 12px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.showcase-bars {
+  display: grid;
+  gap: 8px;
+}
+
+.preview-bar {
+  display: grid;
+  grid-template-columns: 74px minmax(0, 1fr) 54px;
+  gap: 8px;
+  align-items: center;
+}
+
+.preview-bar span,
+.preview-bar strong {
+  color: #59645f;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.preview-bar strong {
+  color: #26312c;
+  text-align: right;
+}
+
+.preview-track {
+  height: 8px;
+  overflow: hidden;
+  background: #e4dac8;
+}
+
+.preview-fill {
+  height: 100%;
+  transform-origin: left center;
+  animation: bar-grow 760ms var(--ease-out-expo) both;
+}
+
+.preview-fill.green {
+  background: #1f5f50;
+}
+
+.preview-fill.blue {
+  background: #315c7b;
+}
+
+.preview-fill.gold {
+  background: #a57417;
+}
+
+.preview-fill.red {
+  background: #9c2d25;
+}
+
+@keyframes bar-grow {
+  from {
+    transform: scaleX(0);
+  }
+
+  to {
+    transform: scaleX(1);
+  }
+}
+
+.component-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.component-tags span {
+  border: 1px solid #d4ccbb;
+  background: #f1ebdc;
+  color: #465049;
+  padding: 5px 7px;
+  font-size: 11px;
+  font-weight: 750;
+  text-transform: capitalize;
+}
+
 .scenario-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -190,6 +321,11 @@ button {
   background: #efeadc;
   font-size: 12px;
   font-weight: 800;
+  transition:
+    background 220ms var(--ease-out-expo),
+    border-color 220ms var(--ease-out-expo),
+    color 220ms var(--ease-out-expo),
+    transform 220ms var(--ease-out-expo);
 }
 
 .sample-button.active {
@@ -200,6 +336,7 @@ button {
 
 .sample-button:hover {
   background: #e5ddca;
+  transform: translateY(-1px);
 }
 
 .sample-button.active:hover {
@@ -217,10 +354,15 @@ button {
   color: #f9f7ef;
   background: #1f5f50;
   font-weight: 850;
+  transition:
+    background 200ms var(--ease-out-expo),
+    transform 200ms var(--ease-out-expo),
+    opacity 200ms var(--ease-out-expo);
 }
 
 .run-button:hover {
   background: #174b3f;
+  transform: translateY(-1px);
 }
 
 .run-button:disabled {
@@ -585,5 +727,15 @@ pre {
   .metric-row,
   .scenario-grid {
     grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
   }
 }
