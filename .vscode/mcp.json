@@ -1,0 +1,17 @@
+{
+  "servers": {
+    "agentBridge": {
+      "type": "stdio",
+      "command": "pnpm",
+      "args": [
+        "--filter",
+        "@agent-bridge/mcp-server",
+        "start"
+      ],
+      "cwd": "${workspaceFolder}",
+      "env": {
+        "CAPABILITY_GATEWAY_URL": "http://localhost:4100"
+      }
+    }
+  }
+}
