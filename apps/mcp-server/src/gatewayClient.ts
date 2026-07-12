@@ -3,7 +3,9 @@ import type {
   CapabilityDefinition,
   CapabilityId,
   CapabilityInvokeInput,
-  IntentResolution
+  IntentResolution,
+  McpConversationSession,
+  McpConversationStep
 } from "@agent-bridge/shared";
 
 const defaultGatewayUrl = "http://localhost:4100";
@@ -24,6 +26,10 @@ export type AgentRequestResponse = {
   resolution: IntentResolution;
   capability?: CapabilityDefinition;
   result?: AgentReadableResult;
+};
+
+export type McpSessionListResponse = {
+  sessions: McpConversationSession[];
 };
 
 export function getGatewayBaseUrl() {
@@ -55,6 +61,20 @@ export const gatewayClient = {
   health: () => requestJson<GatewayHealth>("/health"),
   capabilities: () => requestJson<CapabilityListResponse>("/capabilities"),
   audit: (traceId: string) => requestJson<unknown>(`/audit/${encodeURIComponent(traceId)}`),
+  mcpSessions: () => requestJson<McpSessionListResponse>("/mcp/sessions"),
+  recordMcpStep: (
+    sessionId: string,
+    input: Omit<McpConversationStep, "id" | "sessionId" | "timestamp" | "sequence"> & {
+      clientName?: string;
+    }
+  ) =>
+    requestJson<{ sessionId: string; step: McpConversationStep }>(
+      `/mcp/sessions/${encodeURIComponent(sessionId)}/steps`,
+      {
+        method: "POST",
+        body: JSON.stringify(input)
+      }
+    ),
   resolveIntent: (prompt: string) =>
     requestJson<IntentResolution>("/intent/resolve", {
       method: "POST",

@@ -123,6 +123,93 @@ export function renderAppWidgetHtml() {
       line-height: 1.4;
     }
 
+    .switcher {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin-bottom: 14px;
+    }
+
+    .switcher button {
+      min-height: 30px;
+      border: 1px solid var(--line);
+      border-radius: 0;
+      background: #f3ead9;
+      color: #334039;
+      padding: 5px 8px;
+      font: inherit;
+      font-size: 11px;
+      font-weight: 850;
+      cursor: pointer;
+    }
+
+    .switcher button.active {
+      border-color: var(--green);
+      background: var(--green);
+      color: #fffaf0;
+    }
+
+    .state {
+      display: grid;
+      gap: 9px;
+      margin-top: 12px;
+    }
+
+    .pill-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .pill {
+      border: 1px solid var(--line);
+      background: #f3ead9;
+      color: #3c4741;
+      padding: 5px 7px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .gate {
+      border-top: 3px solid var(--gold);
+      background: #f8efdc;
+      padding: 11px;
+    }
+
+    .denial {
+      border-top: 3px solid var(--red);
+      background: #fff4ef;
+      padding: 11px;
+    }
+
+    .routing {
+      display: grid;
+      gap: 7px;
+      margin-top: 10px;
+    }
+
+    .routing div {
+      border-left: 4px solid var(--blue);
+      background: #f2ecdF;
+      padding: 8px;
+    }
+
+    .routing strong {
+      display: block;
+      color: var(--ink);
+      font-size: 11px;
+      text-transform: uppercase;
+    }
+
+    .routing span {
+      display: block;
+      margin-top: 3px;
+      color: var(--muted);
+      font-size: 11px;
+      line-height: 1.35;
+    }
+
     .error {
       border-color: #d4b6ad;
       background: #fff4ef;
@@ -180,10 +267,31 @@ export function renderAppWidgetHtml() {
       );
     }
 
-    function renderChart(chart, note) {
-      const max = Math.max(...(chart.data || []).map((item) => Number(item.value) || 0), 1);
+    const demoButtons = [
+      ["isa-allowance-chart", "ISA"],
+      ["sipp-confirmation-gate", "SIPP"],
+      ["clarify-routing", "Clarify"],
+      ["scope-denial", "Scope"],
+      ["sensitive-data-minimization", "PII"]
+    ];
+
+    function renderFrame(inner, activeScenarioId) {
       root.innerHTML = \`
         <article class="card">
+          <div class="switcher">
+            \${demoButtons.map(([id, label]) => \`
+              <button data-scenario="\${escapeHtml(id)}" class="\${id === activeScenarioId ? "active" : ""}">\${escapeHtml(label)}</button>
+            \`).join("")}
+          </div>
+          \${inner}
+        </article>
+      \`;
+      queueSizeChanged();
+    }
+
+    function chartHtml(chart, note) {
+      const max = Math.max(...(chart.data || []).map((item) => Number(item.value) || 0), 1);
+      return \`
           <div class="head">
             <h1>\${escapeHtml(chart.title || "Chart")}</h1>
             <span class="unit">\${escapeHtml(chart.unit || "")}</span>
@@ -200,19 +308,100 @@ export function renderAppWidgetHtml() {
             \`).join("")}
           </div>
           \${note ? \`<p class="note">\${escapeHtml(note)}</p>\` : ""}
-        </article>
       \`;
-      queueSizeChanged();
+    }
+
+    function renderChart(chart, note, activeScenarioId = "simple-chart") {
+      renderFrame(chartHtml(chart, note), activeScenarioId);
+    }
+
+    function renderScenario(content, activeScenarioId) {
+      const scenario = content?.scenario || {};
+      const response = content?.response || {};
+      const resolution = response.resolution || {};
+      const result = response.result || {};
+      const app = content?.app || {};
+      const audit = content?.audit || null;
+      const chart = result.chart || scenario.chart;
+      const components = app.components || scenario.components || [];
+      const trace = resolution.routingTrace || [];
+      const status = resolution.status || scenario.expectedStatus || "pending";
+      const summary = result.summary || resolution.reasoning || scenario.narrative || "Scenario completed.";
+
+      let body = "";
+      if (chart) {
+        body += chartHtml(chart, summary);
+      } else {
+        body += \`
+          <div class="head">
+            <h1>\${escapeHtml(scenario.title || "Agent-Bridge scenario")}</h1>
+            <span class="unit">\${escapeHtml(status)}</span>
+          </div>
+          <p class="note">\${escapeHtml(summary)}</p>
+        \`;
+      }
+
+      body += \`
+        <div class="state">
+          <div class="pill-row">
+            <span class="pill">\${escapeHtml(status)}</span>
+            <span class="pill">\${escapeHtml(resolution.resolver || "gateway")}</span>
+            \${response.result?.audit_trace_id ? \`<span class="pill">\${escapeHtml(response.result.audit_trace_id)}</span>\` : ""}
+          </div>
+        </div>
+      \`;
+
+      if (components.includes("confirmation_gate")) {
+        body += \`
+          <div class="gate">
+            <strong>Confirmation required</strong>
+            <p class="note">The agent can explain the recommendation, but execution-oriented actions remain gated.</p>
+          </div>
+        \`;
+      }
+
+      if (status === "denied" || components.includes("policy_denial")) {
+        const policy = resolution.policyDecision;
+        body += \`
+          <div class="denial">
+            <strong>\${escapeHtml(policy?.name || "Policy boundary")}</strong>
+            <p class="note">\${escapeHtml(policy?.detail || resolution.reasoning || "The gateway did not disclose restricted data.")}</p>
+          </div>
+        \`;
+      }
+
+      if (trace.length) {
+        body += \`
+          <div class="routing">
+            \${trace.slice(0, 5).map((step) => \`
+              <div>
+                <strong>\${escapeHtml(step.layer)} · \${escapeHtml(step.status)}</strong>
+                <span>\${escapeHtml(step.detail)}</span>
+              </div>
+            \`).join("")}
+          </div>
+        \`;
+      } else if (audit?.events?.length) {
+        body += \`
+          <div class="routing">
+            \${audit.events.slice(0, 5).map((event) => \`
+              <div>
+                <strong>\${escapeHtml(event.type)}</strong>
+                <span>\${escapeHtml(event.summary)}</span>
+              </div>
+            \`).join("")}
+          </div>
+        \`;
+      }
+
+      renderFrame(body, activeScenarioId);
     }
 
     function renderError(message) {
-      root.innerHTML = \`
-        <article class="card error">
+      renderFrame(\`
           <div class="head"><h1>Chart unavailable</h1></div>
           <p class="note">\${escapeHtml(message)}</p>
-        </article>
-      \`;
-      queueSizeChanged();
+      \`, "simple-chart");
     }
 
     window.addEventListener("message", (event) => {
@@ -285,18 +474,34 @@ export function renderAppWidgetHtml() {
       return sendRequest("tools/call", { name, arguments: argumentsObject || {} });
     }
 
-    async function boot() {
-      renderChart(fallbackChart);
+    async function runScenario(scenarioId) {
+      renderFrame(\`
+        <div class="head"><h1>Running scenario</h1><span class="unit">\${escapeHtml(scenarioId)}</span></div>
+        <p class="note">The MCP App is calling the gateway-backed scenario tool.</p>
+      \`, scenarioId);
 
       try {
-        const result = await callTool("run_demo_scenario", { scenarioId: "simple-chart" });
+        const result = await callTool("run_demo_scenario", { scenarioId });
         const content = result.structuredContent || result;
-        const chart = content?.response?.result?.chart || content?.scenario?.chart;
-        if (chart) renderChart(chart);
+        renderScenario(content, scenarioId);
       } catch (error) {
-        // Keep the fallback chart visible. In hosts without app tool-call support,
-        // this still proves the component render path without turning into a debug page.
+        if (scenarioId === "isa-allowance-chart") {
+          renderChart(fallbackChart, "Fallback chart shown while the host tool bridge is unavailable.", scenarioId);
+          return;
+        }
+        renderError(error instanceof Error ? error.message : String(error));
       }
+    }
+
+    root.addEventListener("click", (event) => {
+      const button = event.target.closest("button[data-scenario]");
+      if (!button) return;
+      runScenario(button.dataset.scenario);
+    });
+
+    async function boot() {
+      renderChart(fallbackChart, "Select a scenario to render the governed MCP interaction.", "isa-allowance-chart");
+      await runScenario("isa-allowance-chart");
     }
 
     boot();

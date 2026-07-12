@@ -24,6 +24,10 @@ const appToolTemplateMeta = {
     "openai/widgetAccessible": true
   }
 };
+const mcpSessionId =
+  process.env.MCP_SESSION_ID ??
+  `MCP-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+const mcpClientName = process.env.MCP_CLIENT_NAME ?? "agent-client";
 
 function jsonText(value: unknown) {
   return {
@@ -47,6 +51,76 @@ function toolError(error: unknown) {
       }
     ]
   };
+}
+
+function extractResultSignals(result: unknown) {
+  const structured = result && typeof result === "object" && "structuredContent" in result
+    ? (result as { structuredContent?: unknown }).structuredContent
+    : result;
+  const payload = structured && typeof structured === "object" ? structured as Record<string, unknown> : {};
+  const response = payload.response && typeof payload.response === "object"
+    ? payload.response as Record<string, unknown>
+    : payload;
+  const resultBody = response.result && typeof response.result === "object"
+    ? response.result as Record<string, unknown>
+    : response;
+  const resolution = response.resolution && typeof response.resolution === "object"
+    ? response.resolution as Record<string, unknown>
+    : {};
+
+  return {
+    traceId: typeof resultBody.audit_trace_id === "string" ? resultBody.audit_trace_id : undefined,
+    capabilityId:
+      typeof resolution.capabilityId === "string"
+        ? resolution.capabilityId as CapabilityId
+        : typeof resultBody.capability === "string"
+          ? resultBody.capability as CapabilityId
+          : undefined,
+    status: typeof resolution.status === "string" ? resolution.status : undefined
+  };
+}
+
+function recordStep(args: Parameters<typeof gatewayClient.recordMcpStep>[1]) {
+  void gatewayClient.recordMcpStep(mcpSessionId, {
+    clientName: mcpClientName,
+    ...args
+  }).catch(() => undefined);
+}
+
+async function observeTool<T>(name: string, input: unknown, run: () => Promise<T>): Promise<T> {
+  recordStep({
+    actor: "agent_client",
+    kind: "tool.call",
+    name,
+    status: "started",
+    summary: `MCP client called ${name}.`,
+    metadata: { input }
+  });
+
+  try {
+    const result = await run();
+    const signals = extractResultSignals(result);
+    recordStep({
+      actor: "mcp_server",
+      kind: "tool.result",
+      name,
+      status: "completed",
+      summary: signals.status ? `${name} completed with ${signals.status}.` : `${name} completed.`,
+      traceId: signals.traceId,
+      capabilityId: signals.capabilityId,
+      metadata: signals
+    });
+    return result;
+  } catch (error) {
+    recordStep({
+      actor: "mcp_server",
+      kind: "error",
+      name,
+      status: "failed",
+      summary: error instanceof Error ? error.message : String(error)
+    });
+    throw error;
+  }
 }
 
 export function createServer() {
@@ -161,13 +235,13 @@ export function createServer() {
         openWorldHint: false
       }
     },
-    async () => {
+    async () => observeTool("list_capabilities", {}, async () => {
       try {
         return jsonText(await gatewayClient.capabilities());
       } catch (error) {
         return toolError(error);
       }
-    }
+    })
   );
 
   server.registerTool(
@@ -190,9 +264,9 @@ export function createServer() {
         "openai/toolInvocation/invoked": "Agent-Bridge ready"
       }
     },
-    async ({ scenarioId }) => {
+    async ({ scenarioId }) => observeTool("open_agent_bridge_app", { scenarioId }, async () => {
       const activeScenario = scenarioId ? getDemoScenario(scenarioId) : demoScenarios[0];
-      return jsonText({
+      const result = jsonText({
         app: {
           name: "Agent-Bridge",
           resourceUri: appResourceUri
@@ -200,7 +274,16 @@ export function createServer() {
         activeScenarioId: activeScenario?.id ?? demoScenarios[0].id,
         scenarios: demoScenarios
       });
-    }
+      recordStep({
+        actor: "mcp_app",
+        kind: "app.render",
+        name: "agent-bridge-app",
+        status: "completed",
+        summary: "MCP App resource returned for client-side rendering.",
+        metadata: { scenarioId: activeScenario?.id ?? demoScenarios[0].id }
+      });
+      return result;
+    })
   );
 
   server.registerTool(
@@ -222,7 +305,7 @@ export function createServer() {
         "openai/toolInvocation/invoked": "Scenarios loaded"
       }
     },
-    async () => jsonText({ scenarios: demoScenarios })
+    async () => observeTool("list_demo_scenarios", {}, async () => jsonText({ scenarios: demoScenarios }))
   );
 
   server.registerTool(
@@ -246,7 +329,7 @@ export function createServer() {
         "openai/toolInvocation/invoked": "Scenario complete"
       }
     },
-    async ({ scenarioId }) => {
+    async ({ scenarioId }) => observeTool("run_demo_scenario", { scenarioId }, async () => {
       try {
         const scenario = getDemoScenario(scenarioId);
         if (!scenario) throw new Error(`Unknown demo scenario: ${scenarioId}`);
@@ -298,7 +381,7 @@ export function createServer() {
       } catch (error) {
         return toolError(error);
       }
-    }
+    })
   );
 
   server.registerTool(
@@ -314,13 +397,13 @@ export function createServer() {
         openWorldHint: false
       }
     },
-    async ({ prompt }) => {
+    async ({ prompt }) => observeTool("resolve_intent", { prompt }, async () => {
       try {
         return jsonText(await gatewayClient.resolveIntent(prompt));
       } catch (error) {
         return toolError(error);
       }
-    }
+    })
   );
 
   server.registerTool(
@@ -357,7 +440,17 @@ export function createServer() {
       drawdownGoal,
       adviserFirmId,
       riskProfile
-    }) => {
+    }) => observeTool("invoke_capability", {
+      capabilityId,
+      customerId,
+      targetRetirementAge,
+      desiredContributionRate,
+      plannedIsaSubscription,
+      plannedDrawdownIncome,
+      drawdownGoal,
+      adviserFirmId,
+      riskProfile
+    }, async () => {
       try {
         return jsonText(
           await gatewayClient.invokeCapability(capabilityId, {
@@ -374,7 +467,7 @@ export function createServer() {
       } catch (error) {
         return toolError(error);
       }
-    }
+    })
   );
 
   server.registerTool(
@@ -411,7 +504,17 @@ export function createServer() {
       drawdownGoal,
       adviserFirmId,
       riskProfile
-    }) => {
+    }) => observeTool("agent_request", {
+      prompt,
+      customerId,
+      targetRetirementAge,
+      desiredContributionRate,
+      plannedIsaSubscription,
+      plannedDrawdownIncome,
+      drawdownGoal,
+      adviserFirmId,
+      riskProfile
+    }, async () => {
       try {
         return jsonText(
           await gatewayClient.agentRequest({
@@ -429,7 +532,7 @@ export function createServer() {
       } catch (error) {
         return toolError(error);
       }
-    }
+    })
   );
 
   return server;

@@ -28,6 +28,7 @@ function createResultBase(
 ) {
   const audit = createAuditRecord({
     capabilityId: capability.id,
+    capabilityVersion: capability.version,
     customerId: input.customerId,
     sourceApis: capability.requiredApis,
     policyChecks,

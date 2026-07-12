@@ -2,7 +2,7 @@ import { loadLocalEnv } from "./env.js";
 import cors from "cors";
 import express from "express";
 import { capabilityInvokeSchema } from "@agent-bridge/shared";
-import { getAuditRecord } from "./audit.js";
+import { getAuditEvents, getAuditRecord, getAuditRecordByRequestId } from "./audit.js";
 import { capabilities, getCapability } from "./catalog.js";
 import {
   composeAdviserModelPortfolioReview,
@@ -12,6 +12,7 @@ import {
 } from "./composers.js";
 import { resolveIntent } from "./intent.js";
 import { isLlmIntentResolverConfigured } from "./llmIntentResolver.js";
+import { getMcpSession, listMcpSessions, recordMcpStep } from "./mcpSessions.js";
 
 loadLocalEnv();
 
@@ -33,6 +34,8 @@ app.get("/", (_req, res) => {
       agentRequest: "POST /agent/request",
       invokeCapability: "POST /capabilities/:capabilityId/invoke",
       audit: "/audit/:traceId"
+      ,
+      mcpSessions: "/mcp/sessions"
     },
     demo: "http://localhost:4102",
     mcp: {
@@ -55,7 +58,35 @@ app.get("/health", (_req, res) => {
 app.get("/capabilities", (_req, res) => {
   res.json({
     interface: "governed-capability-gateway",
+    contractModel: {
+      purpose: "Publish configured, governed business capabilities over existing value-stream APIs.",
+      lifecycle: ["draft", "active", "deprecated"],
+      routeIndex: "catalog metadata + examples + local semantic vectors + optional LLM adjudication",
+      auditModel: "append-only invocation events, currently in-memory for the POC"
+    },
     capabilities
+  });
+});
+
+app.get("/capabilities/:capabilityId/contract", (req, res) => {
+  const capability = getCapability(req.params.capabilityId);
+  if (!capability) {
+    res.status(404).json({ error: "Unknown capability" });
+    return;
+  }
+
+  res.json({
+    contract: capability,
+    enterpriseReadiness: {
+      configuredExecution: capability.executionPlan.steps.length,
+      policyControls: capability.policy,
+      dataClassification: capability.dataClassification,
+      routeSignals: {
+        domains: capability.routing.domains,
+        positiveExamples: capability.routing.positiveExamples.length,
+        negativeExamples: capability.routing.negativeExamples.length
+      }
+    }
   });
 });
 
@@ -261,6 +292,56 @@ app.get("/audit/:traceId", (req, res) => {
     return;
   }
   res.json(record);
+});
+
+app.get("/audit/:traceId/events", (req, res) => {
+  const events = getAuditEvents(req.params.traceId);
+  if (!events) {
+    res.status(404).json({ error: "Audit trace not found" });
+    return;
+  }
+  res.json({ traceId: req.params.traceId, events });
+});
+
+app.get("/requests/:requestId/audit", (req, res) => {
+  const record = getAuditRecordByRequestId(req.params.requestId);
+  if (!record) {
+    res.status(404).json({ error: "Request audit record not found" });
+    return;
+  }
+  res.json(record);
+});
+
+app.get("/mcp/sessions", (req, res) => {
+  const limit = Number(req.query.limit ?? 20);
+  res.json({
+    sessions: listMcpSessions(Number.isFinite(limit) ? limit : 20)
+  });
+});
+
+app.get("/mcp/sessions/:sessionId", (req, res) => {
+  const session = getMcpSession(req.params.sessionId);
+  if (!session) {
+    res.status(404).json({ error: "MCP session not found" });
+    return;
+  }
+  res.json(session);
+});
+
+app.post("/mcp/sessions/:sessionId/steps", (req, res) => {
+  const result = recordMcpStep({
+    sessionId: req.params.sessionId,
+    clientName: typeof req.body?.clientName === "string" ? req.body.clientName : undefined,
+    actor: req.body?.actor,
+    kind: req.body?.kind,
+    name: String(req.body?.name ?? "unknown"),
+    status: req.body?.status,
+    summary: String(req.body?.summary ?? ""),
+    traceId: typeof req.body?.traceId === "string" ? req.body.traceId : undefined,
+    capabilityId: req.body?.capabilityId,
+    metadata: req.body?.metadata && typeof req.body.metadata === "object" ? req.body.metadata : undefined
+  });
+  res.json(result);
 });
 
 app.use((error: Error, _req: express.Request, res: express.Response, _next: express.NextFunction) => {

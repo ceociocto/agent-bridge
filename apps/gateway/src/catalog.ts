@@ -3,6 +3,9 @@ import type { CapabilityDefinition } from "@agent-bridge/shared";
 export const capabilities: CapabilityDefinition[] = [
   {
     id: "personal_investing_isa_allowance_review",
+    version: "2026.07.1",
+    owner: "Personal Investing Value Stream",
+    status: "active",
     name: "Personal Investing ISA Allowance Review",
     description:
       "Assess a UK retail investor's Stocks and Shares ISA usage, remaining allowance, cash drag, and next actions.",
@@ -12,6 +15,35 @@ export const capabilities: CapabilityDefinition[] = [
     inputSchema: {
       customerId: "string",
       plannedIsaSubscription: "number optional"
+    },
+    outputSchema: {
+      summary: "string",
+      tax_year: "string",
+      planned_subscription_check: "object",
+      portfolio_context: "object",
+      next_actions: "array"
+    },
+    dataClassification: "confidential",
+    executionPlan: {
+      mode: "configured_composition",
+      steps: [
+        {
+          id: "load_personal_investing_context",
+          type: "api_call",
+          uses: "Profile API + Accounts API + ISA Subscription API + Holdings API",
+          description: "Load the customer's investing profile, wrappers, ISA allowance, and allocation context."
+        },
+        {
+          id: "check_allowance",
+          type: "calculation",
+          description: "Compare planned ISA subscription against remaining allowance and flexible replacement room."
+        },
+        {
+          id: "map_agent_result",
+          type: "result_mapping",
+          description: "Return allowance status, portfolio context, risks, next actions, and audit reference."
+        }
+      ]
     },
     routing: {
       domains: ["personal investing", "isa", "stocks and shares isa", "retail investment"],
@@ -42,6 +74,9 @@ export const capabilities: CapabilityDefinition[] = [
   },
   {
     id: "sipp_drawdown_pathway_review",
+    version: "2026.07.1",
+    owner: "Retirement Value Stream",
+    status: "active",
     name: "SIPP Drawdown Pathway Review",
     description:
       "Review a UK SIPP drawdown customer's pension access goal, pathway fit, withdrawal sustainability, and MPAA risk.",
@@ -58,6 +93,41 @@ export const capabilities: CapabilityDefinition[] = [
       customerId: "string",
       plannedDrawdownIncome: "number optional",
       drawdownGoal: "string optional"
+    },
+    outputSchema: {
+      summary: "string",
+      pathway_review: "object",
+      allowance_context: "object",
+      projected_income_coverage: "object",
+      next_actions: "array"
+    },
+    dataClassification: "restricted",
+    executionPlan: {
+      mode: "configured_composition",
+      steps: [
+        {
+          id: "verify_drawdown_holding",
+          type: "policy_check",
+          description: "Confirm the customer has an applicable SIPP drawdown arrangement before disclosure."
+        },
+        {
+          id: "load_drawdown_context",
+          type: "api_call",
+          uses: "Profile API + Accounts API + Drawdown API + Pension Allowance API",
+          description: "Load retirement, tax allowance, and drawdown context."
+        },
+        {
+          id: "run_income_projection",
+          type: "api_call",
+          uses: "Retirement Projection API",
+          description: "Project income coverage under the requested drawdown scenario."
+        },
+        {
+          id: "gate_execution_actions",
+          type: "policy_check",
+          description: "Mark execution-oriented actions as requiring explicit customer confirmation."
+        }
+      ]
     },
     routing: {
       domains: ["sipp", "retirement", "drawdown", "pension income"],
@@ -88,6 +158,9 @@ export const capabilities: CapabilityDefinition[] = [
   },
   {
     id: "workplace_pension_contribution_guidance",
+    version: "2026.07.1",
+    owner: "Workplace Investing Value Stream",
+    status: "active",
     name: "Workplace Pension Contribution Guidance",
     description:
       "Help a UK workplace pension member understand contribution choices, employer matching, salary sacrifice, and annual allowance constraints.",
@@ -104,6 +177,41 @@ export const capabilities: CapabilityDefinition[] = [
       customerId: "string",
       desiredContributionRate: "number optional",
       targetRetirementAge: "number optional"
+    },
+    outputSchema: {
+      summary: "string",
+      employer_match: "object",
+      allowance_check: "object",
+      projected_outcome: "object",
+      next_actions: "array"
+    },
+    dataClassification: "restricted",
+    executionPlan: {
+      mode: "configured_composition",
+      steps: [
+        {
+          id: "verify_workplace_holding",
+          type: "policy_check",
+          description: "Confirm a workplace pension relationship before contribution guidance is disclosed."
+        },
+        {
+          id: "load_workplace_context",
+          type: "api_call",
+          uses: "Profile API + Workplace Plan API + Contribution API + Accounts API + Pension Allowance API",
+          description: "Load current rates, employer match, salary sacrifice, balances, and allowance context."
+        },
+        {
+          id: "compare_contribution_scenario",
+          type: "api_call",
+          uses: "Retirement Projection API",
+          description: "Project retirement outcome under the proposed contribution rate."
+        },
+        {
+          id: "map_confirmation_actions",
+          type: "result_mapping",
+          description: "Return recommendation evidence while keeping contribution changes confirmation-gated."
+        }
+      ]
     },
     routing: {
       domains: ["workplace investing", "workplace pension", "contributions", "employer benefits"],
@@ -134,6 +242,9 @@ export const capabilities: CapabilityDefinition[] = [
   },
   {
     id: "adviser_platform_model_portfolio_review",
+    version: "2026.07.1",
+    owner: "Adviser Platform Value Stream",
+    status: "active",
     name: "Adviser Platform Model Portfolio Review",
     description:
       "Support an adviser reviewing a client's model portfolio on an adviser platform with suitability, drift, and platform evidence.",
@@ -150,6 +261,40 @@ export const capabilities: CapabilityDefinition[] = [
       customerId: "string",
       adviserFirmId: "string optional",
       riskProfile: "string optional"
+    },
+    outputSchema: {
+      summary: "string",
+      adviser_context: "object",
+      portfolio_review: "object",
+      risks: "array",
+      next_actions: "array"
+    },
+    dataClassification: "restricted",
+    executionPlan: {
+      mode: "configured_composition",
+      steps: [
+        {
+          id: "verify_adviser_entitlement",
+          type: "policy_check",
+          description: "Require caller-supplied adviser firm entitlement before platform portfolio details are disclosed."
+        },
+        {
+          id: "load_platform_context",
+          type: "api_call",
+          uses: "Client Profile API + Platform Accounts API + Model Portfolio API + Holdings API",
+          description: "Load model portfolio, client profile, platform holdings, and suitability evidence."
+        },
+        {
+          id: "assess_drift",
+          type: "calculation",
+          description: "Compare model target, requested risk profile, allocation, and drift score."
+        },
+        {
+          id: "prepare_review_pack",
+          type: "result_mapping",
+          description: "Return adviser-readable evidence and audit-safe next actions."
+        }
+      ]
     },
     routing: {
       domains: ["adviser solutions", "adviser platform", "model portfolio", "suitability review"],

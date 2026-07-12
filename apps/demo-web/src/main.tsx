@@ -7,13 +7,17 @@ import {
   CheckCircle2,
   ClipboardList,
   Database,
+  FileCode2,
   Filter,
   GitBranch,
+  Layers3,
   Loader2,
   LockKeyhole,
   Network,
   PanelsTopLeft,
   Play,
+  Route,
+  Satellite,
   ShieldCheck
 } from "lucide-react";
 import { demoScenarios, type DemoScenario } from "@agent-bridge/shared";
@@ -23,10 +27,32 @@ const gatewayBaseUrl = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:410
 
 type Capability = {
   id: string;
+  version: string;
+  owner: string;
+  status: "draft" | "active" | "deprecated";
   name: string;
   description: string;
   businessOutcome: string;
   requiredApis: string[];
+  inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  dataClassification: string;
+  executionPlan: {
+    mode: string;
+    steps: Array<{
+      id: string;
+      type: string;
+      uses?: string;
+      description: string;
+    }>;
+  };
+  routing: {
+    domains: string[];
+    keywords: string[];
+    positiveExamples: string[];
+    negativeExamples: string[];
+    riskLevel: string;
+  };
   policy: {
     dataAccess: string;
     requiresCustomerConfirmation: boolean;
@@ -70,9 +96,42 @@ type AgentResponse = {
 
 type AuditRecord = {
   traceId: string;
+  requestId: string;
+  capabilityVersion: string;
   sourceApis: string[];
   policyChecks: Array<{ name: string; status: string; detail: string }>;
   compositionSteps: Array<{ name: string; status: string; detail: string }>;
+  events: Array<{
+    id: string;
+    timestamp: string;
+    type: string;
+    summary: string;
+    detail?: string;
+  }>;
+};
+
+type McpConversationSession = {
+  id: string;
+  clientName: string;
+  startedAt: string;
+  updatedAt: string;
+  status: "active" | "completed" | "failed";
+  stepCount: number;
+  lastSummary: string;
+  traceIds: string[];
+  capabilityIds: string[];
+  steps: Array<{
+    id: string;
+    timestamp: string;
+    sequence: number;
+    actor: string;
+    kind: string;
+    name: string;
+    status: string;
+    summary: string;
+    traceId?: string;
+    capabilityId?: string;
+  }>;
 };
 
 const scenarios = demoScenarios;
@@ -80,11 +139,9 @@ const scenarios = demoScenarios;
 function App() {
   const [capabilities, setCapabilities] = useState<Capability[]>([]);
   const [activeScenarioId, setActiveScenarioId] = useState(scenarios[0].id);
-  const [prompt, setPrompt] = useState(scenarios[0].prompt);
-  const [customerId, setCustomerId] = useState(scenarios[0].customerId);
-  const [targetAge, setTargetAge] = useState(scenarios[0].input.targetRetirementAge ?? 62);
   const [response, setResponse] = useState<AgentResponse | null>(null);
   const [audit, setAudit] = useState<AuditRecord | null>(null);
+  const [mcpSessions, setMcpSessions] = useState<McpConversationSession[]>([]);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -95,14 +152,25 @@ function App() {
       .catch(() => setError("Gateway is not reachable. Start the POC services with pnpm dev."));
   }, []);
 
+  async function refreshMcpSessions() {
+    const res = await fetch(`${gatewayBaseUrl}/mcp/sessions?limit=8`);
+    if (res.ok) {
+      const data = await res.json() as { sessions?: McpConversationSession[] };
+      setMcpSessions(data.sessions ?? []);
+    }
+  }
+
+  useEffect(() => {
+    void refreshMcpSessions();
+    const timer = window.setInterval(() => void refreshMcpSessions(), 4000);
+    return () => window.clearInterval(timer);
+  }, []);
+
   const selectedCapability = useMemo(() => response?.capability ?? capabilities[0], [capabilities, response]);
   const activeScenario = scenarios.find((scenario) => scenario.id === activeScenarioId) ?? scenarios[0];
 
   function applyScenario(scenario: DemoScenario) {
     setActiveScenarioId(scenario.id);
-    setPrompt(scenario.prompt);
-    setCustomerId(scenario.customerId);
-    setTargetAge(scenario.input.targetRetirementAge ?? 62);
     setResponse(null);
     setAudit(null);
     setError("");
@@ -115,7 +183,7 @@ function App() {
     try {
       if (activeScenario.executionMode === "static") {
         setResponse({
-          prompt,
+          prompt: activeScenario.prompt,
           resolution: {
             status: activeScenario.expectedStatus,
             confidence: 1,
@@ -135,9 +203,7 @@ function App() {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
           ...activeScenario.input,
-          prompt,
-          customerId,
-          targetRetirementAge: targetAge
+          prompt: activeScenario.prompt
         })
       });
       if (!res.ok) throw new Error(`Gateway returned ${res.status}`);
@@ -148,6 +214,7 @@ function App() {
         const auditRes = await fetch(`${gatewayBaseUrl}/audit/${data.result.audit_trace_id}`);
         if (auditRes.ok) setAudit((await auditRes.json()) as AuditRecord);
       }
+      await refreshMcpSessions();
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Request failed");
     } finally {
@@ -160,7 +227,7 @@ function App() {
       <section className="masthead">
         <div>
           <p className="eyebrow">Agent-Bridge</p>
-          <h1>AI Gateway POC</h1>
+          <h1>Enterprise Agent Gateway</h1>
         </div>
         <div className="status-strip">
           <span>Value streams :4101</span>
@@ -169,9 +236,33 @@ function App() {
         </div>
       </section>
 
+      <section className="demo-thesis" aria-label="Demo goals">
+        <article>
+          <FileCode2 size={19} />
+          <div>
+            <strong>Configure enterprise capabilities</strong>
+            <span>Existing APIs are published as versioned, policy-bound business contracts.</span>
+          </div>
+        </article>
+        <article>
+          <Layers3 size={19} />
+          <div>
+            <strong>Route intent intelligently</strong>
+            <span>Guardrails, semantic routing, optional LLM adjudication, and fallback are visible per request.</span>
+          </div>
+        </article>
+        <article>
+          <PanelsTopLeft size={19} />
+          <div>
+            <strong>Render MCP App interactions</strong>
+            <span>Charts, confirmation gates, denials, and routing outcomes become user-facing components.</span>
+          </div>
+        </article>
+      </section>
+
       <section className="workspace">
         <form
-          className="agent-console"
+          className="agent-console management-console"
           onSubmit={(event) => {
             event.preventDefault();
             void askAgent();
@@ -179,26 +270,19 @@ function App() {
         >
           <div className="panel-title">
             <BrainCircuit size={20} />
-            <span>User Agent</span>
+            <span>Management Console</span>
           </div>
 
-          <label>
-            <span>Customer</span>
-            <select value={customerId} onChange={(event) => setCustomerId(event.target.value)}>
-              <option value="UK001">UK001 - Amelia Clarke</option>
-              <option value="UK002">UK002 - Martin Hughes</option>
-              <option value="UK003">UK003 - Priya Shah</option>
-            </select>
-          </label>
-
-          <label>
-            <span>Agent request</span>
-            <textarea value={prompt} onChange={(event) => setPrompt(event.target.value)} rows={5} />
-          </label>
+          <div className="ops-summary">
+            <Metric label="Published" value={`${capabilities.length || 4} capabilities`} />
+            <Metric label="Router" value="layered semantic" />
+            <Metric label="MCP sessions" value={`${mcpSessions.length} recent`} />
+            <Metric label="Audit" value={audit ? audit.requestId : "event-ready"} />
+          </div>
 
           <div className="scenario-block">
             <div className="scenario-heading">
-              <span>{activeScenario.title}</span>
+              <span>Replay monitored scenario</span>
               <p>{activeScenario.narrative}</p>
             </div>
             <ScenarioShowcase scenario={activeScenario} response={response} />
@@ -216,20 +300,14 @@ function App() {
             </div>
           </div>
 
-          <label>
-            <span>Target retirement age</span>
-            <input
-              type="number"
-              min={50}
-              max={75}
-              value={targetAge}
-              onChange={(event) => setTargetAge(Number(event.target.value))}
-            />
-          </label>
+          <div className="request-preview">
+            <span>Agent-client request</span>
+            <p>{activeScenario.prompt}</p>
+          </div>
 
           <button className="run-button" type="submit" disabled={loading}>
             {loading ? <Loader2 className="spin" size={18} /> : <Play size={18} />}
-            <span>Ask Agent Bridge</span>
+            <span>Run Monitored Scenario</span>
           </button>
           {error ? <p className="error">{error}</p> : null}
         </form>
@@ -248,6 +326,11 @@ function App() {
                 >
                   <h2>{capability.name}</h2>
                   <p>{capability.description}</p>
+                  <div className="capability-meta">
+                    <span>{capability.version}</span>
+                    <span>{capability.dataClassification}</span>
+                    <span>{capability.routing.riskLevel} risk</span>
+                  </div>
                   <div className="api-tags">
                     {capability.requiredApis.map((api) => (
                       <span key={api}>{api.replace(" API", "")}</span>
@@ -256,6 +339,7 @@ function App() {
                 </article>
               ))}
             </div>
+            {selectedCapability ? <CapabilityContract capability={selectedCapability} /> : null}
           </div>
 
           <div className="response-grid">
@@ -292,6 +376,7 @@ function App() {
                 <Filter size={20} />
                 <span>Routing Pipeline</span>
               </div>
+              <RouterArchitecture />
               {response?.resolution.routingTrace?.length ? (
                 <RoutingTrace steps={response.resolution.routingTrace} />
               ) : (
@@ -319,6 +404,11 @@ function App() {
                     title="Composition"
                     items={audit.compositionSteps.map((step) => `${step.name}: ${step.detail}`)}
                   />
+                  <TraceGroup
+                    icon={<Route size={18} />}
+                    title="Invocation Events"
+                    items={audit.events.map((event) => `${event.type}: ${event.summary}`)}
+                  />
                 </>
               ) : response ? (
                 <TraceGroup
@@ -338,9 +428,141 @@ function App() {
               )}
             </section>
           </div>
+
+          <section className="trace-panel wide">
+            <div className="panel-title">
+              <Satellite size={20} />
+              <span>MCP Conversation Monitor</span>
+            </div>
+            <McpSessionMonitor sessions={mcpSessions} />
+          </section>
         </section>
       </section>
     </main>
+  );
+}
+
+function McpSessionMonitor({ sessions }: { sessions: McpConversationSession[] }) {
+  if (!sessions.length) {
+    return (
+      <div className="empty-monitor">
+        <Satellite size={28} />
+        <p>MCP client activity will appear here after Copilot, Claude Code, or the smoke client calls Agent-Bridge tools.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mcp-session-list">
+      {sessions.map((session) => (
+        <article className="mcp-session" key={session.id}>
+          <div className="mcp-session-head">
+            <div>
+              <span>{session.clientName}</span>
+              <h3>{session.id}</h3>
+            </div>
+            <strong>{session.stepCount} steps</strong>
+          </div>
+          <p>{session.lastSummary}</p>
+          <div className="mcp-tags">
+            {session.capabilityIds.map((id) => (
+              <span key={id}>{id.replaceAll("_", " ")}</span>
+            ))}
+            {session.traceIds.map((id) => (
+              <span key={id}>{id}</span>
+            ))}
+          </div>
+          <div className="mcp-timeline">
+            {session.steps.map((step) => (
+              <div className={`mcp-step ${step.status}`} key={step.id}>
+                <span>{step.sequence}</span>
+                <div>
+                  <strong>{step.kind.replaceAll(".", " ")} · {step.name}</strong>
+                  <p>{step.summary}</p>
+                  <em>{step.actor} · {new Date(step.timestamp).toLocaleTimeString()}</em>
+                </div>
+              </div>
+            ))}
+          </div>
+        </article>
+      ))}
+    </div>
+  );
+}
+
+function CapabilityContract({ capability }: { capability: Capability }) {
+  return (
+    <section className="contract-panel" aria-label="Capability contract">
+      <div className="contract-head">
+        <div>
+          <span>Enterprise capability contract</span>
+          <h3>{capability.id}</h3>
+        </div>
+        <strong>{capability.status}</strong>
+      </div>
+      <p>{capability.businessOutcome}</p>
+      <div className="contract-grid">
+        <MiniSpec title="Owner" value={capability.owner} />
+        <MiniSpec title="Version" value={capability.version} />
+        <MiniSpec title="Access" value={capability.policy.dataAccess} />
+        <MiniSpec title="Confirmation" value={capability.policy.requiresCustomerConfirmation ? "required" : "not required"} />
+      </div>
+      <div className="contract-columns">
+        <TraceGroup
+          icon={<Database size={18} />}
+          title="Composed APIs"
+          items={capability.requiredApis}
+        />
+        <TraceGroup
+          icon={<FileCode2 size={18} />}
+          title="Configured Inputs"
+          items={Object.entries(capability.inputSchema).map(([key, value]) => `${key}: ${String(value)}`)}
+        />
+      </div>
+      <div className="execution-plan">
+        {capability.executionPlan.steps.map((step, index) => (
+          <article key={step.id}>
+            <span>{index + 1}</span>
+            <div>
+              <strong>{step.id.replaceAll("_", " ")}</strong>
+              <p>{step.uses ? `${step.uses}. ${step.description}` : step.description}</p>
+            </div>
+            <em>{step.type.replaceAll("_", " ")}</em>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function MiniSpec({ title, value }: { title: string; value: string }) {
+  return (
+    <div className="mini-spec">
+      <span>{title}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function RouterArchitecture() {
+  const layers = [
+    ["Policy guard", "PII and scope boundaries"],
+    ["Rules guard", "Deterministic safety conflicts"],
+    ["Semantic router", "Catalog vectors and examples"],
+    ["LLM adjudicator", "Only ambiguous top-K"],
+    ["Fallback", "Clarify or refuse safely"]
+  ];
+
+  return (
+    <div className="router-architecture">
+      {layers.map(([title, detail], index) => (
+        <div key={title}>
+          <span>{index + 1}</span>
+          <strong>{title}</strong>
+          <em>{detail}</em>
+        </div>
+      ))}
+    </div>
   );
 }
 

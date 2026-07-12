@@ -26,11 +26,25 @@ export type CapabilityInvokeInput = z.infer<typeof capabilityInvokeSchema>;
 
 export type CapabilityDefinition = {
   id: CapabilityId;
+  version: string;
+  owner: string;
+  status: "draft" | "active" | "deprecated";
   name: string;
   description: string;
   businessOutcome: string;
   requiredApis: string[];
   inputSchema: Record<string, unknown>;
+  outputSchema: Record<string, unknown>;
+  dataClassification: "public" | "internal" | "confidential" | "restricted";
+  executionPlan: {
+    mode: "configured_composition";
+    steps: Array<{
+      id: string;
+      type: "api_call" | "policy_check" | "calculation" | "result_mapping";
+      uses?: string;
+      description: string;
+    }>;
+  };
   routing: {
     domains: string[];
     keywords: string[];
@@ -54,12 +68,73 @@ export type AuditStep = {
 
 export type AuditRecord = {
   traceId: string;
+  requestId: string;
   capabilityId: CapabilityId;
+  capabilityVersion: string;
   customerId: string;
   startedAt: string;
   sourceApis: string[];
   policyChecks: AuditStep[];
   compositionSteps: AuditStep[];
+  events: AuditEvent[];
+};
+
+export type AuditEvent = {
+  id: string;
+  traceId: string;
+  requestId: string;
+  timestamp: string;
+  type:
+    | "request.received"
+    | "intent.resolved"
+    | "policy.checked"
+    | "capability.invoked"
+    | "backend_api.called"
+    | "composition.completed"
+    | "confirmation.required"
+    | "result.returned"
+    | "request.denied"
+    | "request.failed";
+  summary: string;
+  detail?: string;
+  capabilityId?: CapabilityId;
+  customerId?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type McpConversationStep = {
+  id: string;
+  sessionId: string;
+  timestamp: string;
+  sequence: number;
+  actor: "agent_client" | "mcp_server" | "gateway" | "mcp_app";
+  kind:
+    | "resource.read"
+    | "tool.call"
+    | "tool.result"
+    | "gateway.request"
+    | "gateway.result"
+    | "app.render"
+    | "error";
+  name: string;
+  status: "started" | "completed" | "failed" | "skipped";
+  summary: string;
+  traceId?: string;
+  capabilityId?: CapabilityId;
+  metadata?: Record<string, unknown>;
+};
+
+export type McpConversationSession = {
+  id: string;
+  clientName: string;
+  startedAt: string;
+  updatedAt: string;
+  status: "active" | "completed" | "failed";
+  stepCount: number;
+  lastSummary: string;
+  traceIds: string[];
+  capabilityIds: CapabilityId[];
+  steps: McpConversationStep[];
 };
 
 export type IntentResolution = {
