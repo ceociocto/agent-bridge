@@ -248,6 +248,31 @@ function extractRiskProfile(prompt: string) {
   return undefined;
 }
 
+function extractIsaWorkflowId(prompt: string) {
+  const lower = prompt.toLowerCase();
+  if (lower.includes("cash drag") || lower.includes("uninvested cash") || lower.includes("cash allocation")) {
+    return "isa_cash_drag_review" as const;
+  }
+  if (
+    lower.includes("can i add") ||
+    lower.includes("subscribe") ||
+    lower.includes("subscription") ||
+    lower.includes("planned isa")
+  ) {
+    return "isa_subscription_feasibility" as const;
+  }
+  if (
+    lower.includes("allowance left") ||
+    lower.includes("remaining allowance") ||
+    lower.includes("left this tax year") ||
+    lower.includes("how much of my isa allowance")
+  ) {
+    return "isa_allowance_remaining" as const;
+  }
+  if (lower.includes("full review") || lower.includes("overall review")) return "isa_full_review" as const;
+  return undefined;
+}
+
 type FieldExtractor = (body: Record<string, unknown>, prompt: string) => unknown;
 
 // Only fields declared in the resolved capability's inputSchema are populated.
@@ -256,6 +281,7 @@ type FieldExtractor = (body: Record<string, unknown>, prompt: string) => unknown
 // (e.g. plannedIsaSubscription) when the prompt mentions multiple products.
 const fieldExtractors: Record<string, FieldExtractor> = {
   customerId: (body) => body.customerId,
+  isaWorkflowId: (body, prompt) => body.isaWorkflowId ?? extractIsaWorkflowId(prompt),
   plannedIsaSubscription: (body, prompt) =>
     body.plannedIsaSubscription ?? extractMoneyAfter(prompt, ["isa", "subscribe", "add"]),
   plannedDrawdownIncome: (body, prompt) =>

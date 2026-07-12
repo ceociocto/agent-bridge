@@ -9,11 +9,21 @@ export const capabilityIds = [
 
 export type CapabilityId = (typeof capabilityIds)[number];
 
+export const isaWorkflowIds = [
+  "isa_allowance_remaining",
+  "isa_subscription_feasibility",
+  "isa_cash_drag_review",
+  "isa_full_review"
+] as const;
+
+export type IsaWorkflowId = (typeof isaWorkflowIds)[number];
+
 export const capabilityInvokeSchema = z.object({
   customerId: z.string().min(1),
   targetRetirementAge: z.number().int().min(50).max(75).optional(),
   desiredContributionRate: z.number().min(0).max(100).optional(),
   plannedIsaSubscription: z.number().min(0).max(100000).optional(),
+  isaWorkflowId: z.enum(isaWorkflowIds).optional(),
   plannedDrawdownIncome: z.number().min(0).max(250000).optional(),
   drawdownGoal: z
     .enum(["keep_invested", "take_income_within_five_years", "cash_out", "buy_annuity"])

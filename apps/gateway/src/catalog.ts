@@ -14,10 +14,14 @@ export const capabilities: CapabilityDefinition[] = [
     requiredApis: ["Profile API", "Accounts API", "ISA Subscription API", "Holdings API"],
     inputSchema: {
       customerId: "string",
-      plannedIsaSubscription: "number optional"
+      plannedIsaSubscription: "number optional",
+      isaWorkflowId:
+        "enum optional: isa_allowance_remaining | isa_subscription_feasibility | isa_cash_drag_review | isa_full_review"
     },
     outputSchema: {
       summary: "string",
+      workflow_id: "string",
+      composition_mode: "string",
       tax_year: "string",
       planned_subscription_check: "object",
       portfolio_context: "object",
@@ -28,10 +32,17 @@ export const capabilities: CapabilityDefinition[] = [
       mode: "configured_composition",
       steps: [
         {
+          id: "select_isa_micro_workflow",
+          type: "policy_check",
+          description:
+            "Select a controlled ISA scenario workflow from the prompt or explicit isaWorkflowId before calling downstream APIs."
+        },
+        {
           id: "load_personal_investing_context",
           type: "api_call",
-          uses: "Profile API + Accounts API + ISA Subscription API + Holdings API",
-          description: "Load the customer's investing profile, wrappers, ISA allowance, and allocation context."
+          uses: "Workflow-specific subset of Profile API + Accounts API + ISA Subscription API + Holdings API",
+          description:
+            "Load only the API set needed by the selected ISA workflow: allowance, subscription feasibility, cash-drag review, or full review."
         },
         {
           id: "check_allowance",

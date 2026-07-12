@@ -2,7 +2,8 @@ import type {
   AgentReadableResult,
   AuditStep,
   CapabilityDefinition,
-  CapabilityInvokeInput
+  CapabilityInvokeInput,
+  IsaWorkflowId
 } from "@agent-bridge/shared";
 import { createAuditRecord } from "./audit.js";
 import { evaluatePolicy } from "./policy.js";
@@ -24,13 +25,14 @@ function createResultBase(
   capability: CapabilityDefinition,
   input: CapabilityInvokeInput,
   policyChecks: AuditStep[],
-  compositionSteps: AuditStep[]
+  compositionSteps: AuditStep[],
+  sourceApis = capability.requiredApis
 ) {
   const audit = createAuditRecord({
     capabilityId: capability.id,
     capabilityVersion: capability.version,
     customerId: input.customerId,
-    sourceApis: capability.requiredApis,
+    sourceApis,
     policyChecks,
     compositionSteps
   });
@@ -47,7 +49,7 @@ function createResultBase(
   }
 
   return {
-    source_apis: capability.requiredApis,
+    source_apis: sourceApis,
     policy_checks: policyChecks,
     audit_trace_id: audit.traceId
   };
@@ -75,7 +77,252 @@ export async function composeIsaAllowanceReview(
   capability: CapabilityDefinition,
   input: CapabilityInvokeInput
 ): Promise<AgentReadableResult> {
+  const workflow = isaWorkflowRegistry[input.isaWorkflowId ?? "isa_full_review"];
+  return workflow.execute(capability, input);
+}
+
+type IsaWorkflowDefinition = {
+  id: IsaWorkflowId;
+  reason: string;
+  sourceApis: string[];
+  execute: (capability: CapabilityDefinition, input: CapabilityInvokeInput) => Promise<AgentReadableResult>;
+};
+
+const isaWorkflowRegistry: Record<IsaWorkflowId, IsaWorkflowDefinition> = {
+  isa_allowance_remaining: {
+    id: "isa_allowance_remaining",
+    reason: "The request is scoped to remaining ISA allowance, so portfolio APIs are not needed.",
+    sourceApis: ["Profile API", "ISA Subscription API"],
+    execute: composeIsaAllowanceRemaining
+  },
+  isa_subscription_feasibility: {
+    id: "isa_subscription_feasibility",
+    reason: "The request asks whether a planned ISA subscription fits within allowance and account context.",
+    sourceApis: ["Profile API", "Accounts API", "ISA Subscription API"],
+    execute: composeIsaSubscriptionFeasibility
+  },
+  isa_cash_drag_review: {
+    id: "isa_cash_drag_review",
+    reason: "The request is about uninvested cash or allocation, so holdings context is required.",
+    sourceApis: ["Profile API", "Accounts API", "ISA Subscription API", "Holdings API"],
+    execute: composeIsaCashDragReview
+  },
+  isa_full_review: {
+    id: "isa_full_review",
+    reason: "The request needs the complete ISA review path or no narrower workflow was selected.",
+    sourceApis: ["Profile API", "Accounts API", "ISA Subscription API", "Holdings API"],
+    execute: composeIsaFullReview
+  }
+};
+
+function isaWorkflowFields(workflow: IsaWorkflowDefinition) {
+  return {
+    workflow_id: workflow.id,
+    sub_intent: workflow.id,
+    composition_mode: "capability_internal_micro_workflow",
+    workflow_reasoning: workflow.reason
+  };
+}
+
+function addIsaWorkflowSelectionStep(workflow: IsaWorkflowDefinition, compositionSteps: AuditStep[]) {
+  compositionSteps.push({
+    name: "select_isa_micro_workflow",
+    status: "completed",
+    detail: `Selected ${workflow.id}. ${workflow.reason}`
+  });
+}
+
+function isaAllowanceSnapshot(isa: {
+  annualIsaAllowance: number;
+  stocksAndSharesIsaSubscribed: number;
+  cashIsaSubscribed: number;
+  flexibleIsaReplacementAvailable: number;
+}) {
+  const subscribed = isa.stocksAndSharesIsaSubscribed + isa.cashIsaSubscribed;
+  const remainingAllowance = Math.max(isa.annualIsaAllowance - subscribed, 0);
+  return {
+    subscribed,
+    remainingAllowance
+  };
+}
+
+async function composeIsaAllowanceRemaining(
+  capability: CapabilityDefinition,
+  input: CapabilityInvokeInput
+): Promise<AgentReadableResult> {
+  const workflow = isaWorkflowRegistry.isa_allowance_remaining;
   const compositionSteps: AuditStep[] = [];
+  addIsaWorkflowSelectionStep(workflow, compositionSteps);
+
+  const [profile, isa] = await Promise.all([
+    valueStreamClient.profile(input.customerId),
+    valueStreamClient.isaSubscriptions(input.customerId)
+  ]);
+
+  compositionSteps.push({
+    name: "load_isa_allowance_context",
+    status: "completed",
+    detail: "Composed Profile and ISA Subscription APIs."
+  });
+
+  const { subscribed, remainingAllowance } = isaAllowanceSnapshot(isa);
+  const base = createResultBase(capability, input, evaluatePolicy(capability), compositionSteps, workflow.sourceApis);
+
+  return {
+    capability: capability.id,
+    ...isaWorkflowFields(workflow),
+    summary: `${profile.name} has ${money(remainingAllowance)} of ${isa.taxYear} ISA allowance remaining.`,
+    customer: {
+      customer_id: profile.customerId,
+      name: profile.name,
+      segment: profile.segment
+    },
+    tax_year: isa.taxYear,
+    isa_allowance: money(isa.annualIsaAllowance),
+    subscribed_so_far: money(subscribed),
+    remaining_allowance: money(remainingAllowance),
+    next_actions: [
+      { action: "ask_if_customer_wants_to_check_a_planned_subscription", recommended: true },
+      { action: "review_cash_allocation", recommended: false }
+    ],
+    ...base
+  };
+}
+
+async function composeIsaSubscriptionFeasibility(
+  capability: CapabilityDefinition,
+  input: CapabilityInvokeInput
+): Promise<AgentReadableResult> {
+  const workflow = isaWorkflowRegistry.isa_subscription_feasibility;
+  const compositionSteps: AuditStep[] = [];
+  addIsaWorkflowSelectionStep(workflow, compositionSteps);
+
+  const [profile, accounts, isa] = await Promise.all([
+    valueStreamClient.profile(input.customerId),
+    valueStreamClient.accounts(input.customerId),
+    valueStreamClient.isaSubscriptions(input.customerId)
+  ]);
+
+  compositionSteps.push({
+    name: "load_isa_subscription_context",
+    status: "completed",
+    detail: "Composed Profile, Accounts, and ISA Subscription APIs."
+  });
+
+  const { subscribed, remainingAllowance } = isaAllowanceSnapshot(isa);
+  const plannedSubscription = input.plannedIsaSubscription ?? Math.min(remainingAllowance, 5000);
+  const wouldExceedAllowance = plannedSubscription > remainingAllowance + isa.flexibleIsaReplacementAvailable;
+  const isaAccount = accounts.find((account) => account.wrapper === "ISA");
+  const base = createResultBase(capability, input, evaluatePolicy(capability), compositionSteps, workflow.sourceApis);
+
+  return {
+    capability: capability.id,
+    ...isaWorkflowFields(workflow),
+    summary: wouldExceedAllowance
+      ? `${profile.name}'s planned ISA subscription of ${money(plannedSubscription)} requires review before submission.`
+      : `${profile.name}'s planned ISA subscription of ${money(plannedSubscription)} fits within the remaining allowance.`,
+    customer: {
+      customer_id: profile.customerId,
+      name: profile.name,
+      segment: profile.segment
+    },
+    tax_year: isa.taxYear,
+    isa_allowance: money(isa.annualIsaAllowance),
+    subscribed_so_far: money(subscribed),
+    remaining_allowance: money(remainingAllowance),
+    planned_subscription_check: {
+      planned_subscription: money(plannedSubscription),
+      status: wouldExceedAllowance ? "requires_review" : "within_allowance",
+      detail: wouldExceedAllowance
+        ? "The planned subscription is above the remaining allowance and flexible replacement room."
+        : "The planned subscription fits within the remaining ISA allowance."
+    },
+    account_context: {
+      has_stocks_and_shares_isa: Boolean(isaAccount),
+      isa_balance: money(isaAccount?.balance ?? 0),
+      eligible_for_contribution: isaAccount?.eligibleForContribution ?? false
+    },
+    risks: [
+      wouldExceedAllowance
+        ? "Potential ISA over-subscription if the planned amount is submitted unchanged."
+        : "No allowance breach detected for the planned subscription."
+    ],
+    next_actions: [
+      { action: "confirm_subscription_amount", required: wouldExceedAllowance },
+      { action: "continue_to_subscription_journey", requires_customer_confirmation: true }
+    ],
+    ...base
+  };
+}
+
+async function composeIsaCashDragReview(
+  capability: CapabilityDefinition,
+  input: CapabilityInvokeInput
+): Promise<AgentReadableResult> {
+  const workflow = isaWorkflowRegistry.isa_cash_drag_review;
+  const compositionSteps: AuditStep[] = [];
+  addIsaWorkflowSelectionStep(workflow, compositionSteps);
+
+  const [profile, accounts, holdings, isa] = await Promise.all([
+    valueStreamClient.profile(input.customerId),
+    valueStreamClient.accounts(input.customerId),
+    valueStreamClient.holdings(input.customerId),
+    valueStreamClient.isaSubscriptions(input.customerId)
+  ]);
+
+  compositionSteps.push({
+    name: "load_isa_cash_drag_context",
+    status: "completed",
+    detail: "Composed Profile, Accounts, ISA Subscription, and Holdings APIs."
+  });
+
+  const { subscribed, remainingAllowance } = isaAllowanceSnapshot(isa);
+  const isaAccount = accounts.find((account) => account.wrapper === "ISA");
+  const cashAboveDemoThreshold = holdings.allocation.cash > 10;
+  const base = createResultBase(capability, input, evaluatePolicy(capability), compositionSteps, workflow.sourceApis);
+
+  return {
+    capability: capability.id,
+    ...isaWorkflowFields(workflow),
+    summary: `${profile.name}'s ISA has ${money(isa.uninvestedCash)} uninvested cash and a ${
+      holdings.allocation.cash
+    }% cash allocation.`,
+    customer: {
+      customer_id: profile.customerId,
+      name: profile.name,
+      risk_profile: profile.riskProfile
+    },
+    tax_year: isa.taxYear,
+    subscribed_so_far: money(subscribed),
+    remaining_allowance: money(remainingAllowance),
+    portfolio_context: {
+      isa_balance: money(isaAccount?.balance ?? 0),
+      uninvested_cash: money(isa.uninvestedCash),
+      cash_allocation: `${holdings.allocation.cash}%`,
+      top_holdings: holdings.topHoldings
+    },
+    risks: [
+      cashAboveDemoThreshold
+        ? "Cash allocation is above the demo threshold and should be reviewed against the investment objective."
+        : "Cash allocation is within the demo threshold.",
+      `The customer risk profile is ${profile.riskProfile}; cash level should be assessed against that profile.`
+    ],
+    next_actions: [
+      { action: "review_cash_allocation", recommended: cashAboveDemoThreshold },
+      { action: "compare_stocks_and_shares_isa_options", recommended: true }
+    ],
+    ...base
+  };
+}
+
+async function composeIsaFullReview(
+  capability: CapabilityDefinition,
+  input: CapabilityInvokeInput
+): Promise<AgentReadableResult> {
+  const workflow = isaWorkflowRegistry.isa_full_review;
+  const compositionSteps: AuditStep[] = [];
+  addIsaWorkflowSelectionStep(workflow, compositionSteps);
+
   const [profile, accounts, holdings, isa] = await Promise.all([
     valueStreamClient.profile(input.customerId),
     valueStreamClient.accounts(input.customerId),
@@ -89,15 +336,15 @@ export async function composeIsaAllowanceReview(
     detail: "Composed Profile, Accounts, ISA Subscription, and Holdings APIs."
   });
 
-  const subscribed = isa.stocksAndSharesIsaSubscribed + isa.cashIsaSubscribed;
-  const remainingAllowance = Math.max(isa.annualIsaAllowance - subscribed, 0);
+  const { subscribed, remainingAllowance } = isaAllowanceSnapshot(isa);
   const plannedSubscription = input.plannedIsaSubscription ?? Math.min(remainingAllowance, 5000);
   const wouldExceedAllowance = plannedSubscription > remainingAllowance + isa.flexibleIsaReplacementAvailable;
   const isaAccount = accounts.find((account) => account.wrapper === "ISA");
-  const base = createResultBase(capability, input, evaluatePolicy(capability), compositionSteps);
+  const base = createResultBase(capability, input, evaluatePolicy(capability), compositionSteps, workflow.sourceApis);
 
   return {
     capability: capability.id,
+    ...isaWorkflowFields(workflow),
     summary: `${profile.name} has ${money(remainingAllowance)} of ${isa.taxYear} ISA allowance remaining before any new subscription.`,
     customer: {
       customer_id: profile.customerId,
