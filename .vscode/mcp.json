@@ -2,11 +2,9 @@
   "servers": {
     "agentBridge": {
       "type": "stdio",
-      "command": "pnpm",
+      "command": "node",
       "args": [
-        "--filter",
-        "@agent-bridge/mcp-server",
-        "start"
+        "apps/mcp-server/dist/server.js"
       ],
       "cwd": "${workspaceFolder}",
       "env": {
