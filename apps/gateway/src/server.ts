@@ -32,6 +32,7 @@ app.get("/", (_req, res) => {
       capabilities: "/capabilities",
       resolveIntent: "POST /intent/resolve",
       agentRequest: "POST /agent/request",
+      aguiRuns: "POST /agui/runs",
       invokeCapability: "POST /capabilities/:capabilityId/invoke",
       audit: "/audit/:traceId"
       ,
@@ -177,6 +178,230 @@ app.post("/agent/request", async (req, res, next) => {
     next(error);
   }
 });
+
+app.post("/agui/runs", async (req, res, next) => {
+  try {
+    const prompt = String(req.body?.prompt ?? "");
+    if (!prompt.trim()) {
+      res.status(400).json({ error: "prompt is required" });
+      return;
+    }
+
+    res.writeHead(200, {
+      "content-type": "text/event-stream; charset=utf-8",
+      "cache-control": "no-cache, no-transform",
+      connection: "keep-alive",
+      "x-accel-buffering": "no"
+    });
+
+    const runId = `AGUI-${Date.now()}-${Math.random().toString(36).slice(2, 8).toUpperCase()}`;
+    writeAguiEvent(res, {
+      type: "RUN_STARTED",
+      label: "Run started",
+      detail: "Web agent interaction opened against the governed capability gateway.",
+      status: "running",
+      runId,
+      state: { prompt }
+    });
+    writeAguiEvent(res, {
+      type: "MESSAGES_SNAPSHOT",
+      label: "User message captured",
+      detail: prompt,
+      status: "completed",
+      runId
+    });
+    writeAguiEvent(res, {
+      type: "STATE_DELTA",
+      label: "Customer scope check",
+      detail: "Checking active customer context before intent routing.",
+      status: "running",
+      runId
+    });
+
+    const scopeDecision = evaluateCustomerScope(prompt, String(req.body?.customerId ?? ""));
+    if (scopeDecision) {
+      const response = {
+        prompt,
+        resolution: scopeDecision
+      };
+      writeAguiEvent(res, {
+        type: "STATE_DELTA",
+        label: "Scope denied",
+        detail: scopeDecision.reasoning,
+        status: "blocked",
+        runId,
+        state: { resolution: scopeDecision }
+      });
+      writeAguiEvent(res, {
+        type: "CUSTOM",
+        label: "A2UI boundary surface",
+        detail: "The response shape maps to a policy-boundary UI surface.",
+        status: "blocked",
+        runId,
+        state: { presentationHint: "policy_boundary" }
+      });
+      writeAguiEvent(res, {
+        type: "RUN_FINISHED",
+        label: "Run finished",
+        detail: "The run stopped before downstream API invocation.",
+        status: "blocked",
+        runId,
+        response
+      });
+      res.end();
+      return;
+    }
+
+    writeAguiEvent(res, {
+      type: "STATE_DELTA",
+      label: "Intent analysis",
+      detail: "Running policy guard, rules guard, semantic router, and optional LLM adjudication.",
+      status: "running",
+      runId
+    });
+    const resolution = await resolveIntent(prompt);
+    writeAguiEvent(res, {
+      type: "STATE_DELTA",
+      label: "Capability match",
+      detail: resolution.reasoning,
+      status: resolution.status === "resolved" ? "completed" : "blocked",
+      runId,
+      state: {
+        resolution,
+        routingTrace: resolution.routingTrace ?? []
+      }
+    });
+
+    if (resolution.status !== "resolved" || !resolution.capabilityId) {
+      const response = {
+        prompt,
+        resolution
+      };
+      writeAguiEvent(res, {
+        type: "CUSTOM",
+        label: "A2UI decision surface",
+        detail: "The response shape maps to clarification, unsupported, or governance UI.",
+        status: "blocked",
+        runId,
+        state: { presentationHint: resolution.status }
+      });
+      writeAguiEvent(res, {
+        type: "RUN_FINISHED",
+        label: "Run finished",
+        detail: "No governed capability was invoked.",
+        status: "blocked",
+        runId,
+        response
+      });
+      res.end();
+      return;
+    }
+
+    const capability = getCapability(resolution.capabilityId);
+    if (!capability) {
+      throw new Error("Resolved capability was not found");
+    }
+
+    writeAguiEvent(res, {
+      type: "TOOL_CALL_START",
+      label: "Capability invocation",
+      detail: `Invoking ${capability.id}.`,
+      status: "running",
+      runId,
+      state: {
+        capabilityId: capability.id,
+        requiredApis: capability.requiredApis
+      }
+    });
+
+    const parsed = capabilityInvokeSchema.safeParse(
+      buildCapabilityInput(capability, req.body ?? {}, prompt)
+    );
+    if (!parsed.success) {
+      writeAguiEvent(res, {
+        type: "RUN_ERROR",
+        label: "Invalid request input",
+        detail: "The resolved capability rejected the supplied input shape.",
+        status: "blocked",
+        runId,
+        state: { issues: parsed.error.issues }
+      });
+      res.end();
+      return;
+    }
+
+    const result = await composeCapability(capability, parsed.data);
+    const response = {
+      prompt,
+      resolution,
+      capability,
+      result
+    };
+
+    writeAguiEvent(res, {
+      type: "TOOL_CALL_END",
+      label: "Capability result",
+      detail: `${result.source_apis.length} governed source APIs composed.`,
+      status: "completed",
+      runId,
+      state: {
+        sourceApis: result.source_apis,
+        policyChecks: result.policy_checks,
+        auditTraceId: result.audit_trace_id
+      }
+    });
+    writeAguiEvent(res, {
+      type: "CUSTOM",
+      label: "A2UI surface update",
+      detail: "The final governed result can now be rendered as typed UI components.",
+      status: "completed",
+      runId,
+      state: {
+        presentationHint: capability.id,
+        outputKeys: Object.keys(result)
+      }
+    });
+    writeAguiEvent(res, {
+      type: "RUN_FINISHED",
+      label: "Run finished",
+      detail: result.audit_trace_id
+        ? `Audit trace ${result.audit_trace_id} linked.`
+        : "Run completed.",
+      status: "completed",
+      runId,
+      response
+    });
+    res.end();
+  } catch (error) {
+    if (res.headersSent) {
+      writeAguiEvent(res, {
+        type: "RUN_ERROR",
+        label: "Run failed",
+        detail: error instanceof Error ? error.message : String(error),
+        status: "blocked"
+      });
+      res.end();
+      return;
+    }
+    next(error);
+  }
+});
+
+function writeAguiEvent(
+  res: express.Response,
+  event: {
+    type: string;
+    label: string;
+    detail: string;
+    status: "running" | "completed" | "blocked";
+    runId?: string;
+    state?: Record<string, unknown>;
+    response?: unknown;
+  }
+) {
+  res.write(`event: ${event.type}\n`);
+  res.write(`data: ${JSON.stringify({ id: `${event.type}-${Date.now()}`, timestamp: new Date().toISOString(), ...event })}\n\n`);
+}
 
 type ParsedCapabilityInput = ReturnType<typeof capabilityInvokeSchema.parse>;
 
