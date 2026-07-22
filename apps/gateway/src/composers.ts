@@ -516,6 +516,7 @@ export async function composeWorkplacePensionContributionGuidance(
   input: CapabilityInvokeInput
 ): Promise<AgentReadableResult> {
   const compositionSteps: AuditStep[] = [];
+  const workflowId = input.microWorkflowId ?? "workplace_contribution_guidance";
   const [profile, accounts, plan, contribution, taxLimit] = await Promise.all([
     valueStreamClient.profile(input.customerId),
     valueStreamClient.accounts(input.customerId),
@@ -559,6 +560,11 @@ export async function composeWorkplacePensionContributionGuidance(
   });
 
   compositionSteps.push({
+    name: "select_workplace_micro_workflow",
+    status: "completed",
+    detail: `Selected ${workflowId} within the workplace pension capability.`
+  });
+  compositionSteps.push({
     name: "load_workplace_pension_context",
     status: "completed",
     detail: "Composed Profile, Workplace Plan, Contribution, Accounts, and Pension Allowance APIs."
@@ -598,6 +604,8 @@ export async function composeWorkplacePensionContributionGuidance(
 
   return {
     capability: capability.id,
+    workflow_id: workflowId,
+    composition_mode: "capability_internal_micro_workflow",
     summary: `A ${recommendedRate}% workplace pension contribution would ${
       employerMatchCaptured ? "capture" : "not yet capture"
     } the full employer match for ${profile.name}.`,
@@ -643,6 +651,7 @@ export async function composeAdviserModelPortfolioReview(
   input: CapabilityInvokeInput
 ): Promise<AgentReadableResult> {
   const compositionSteps: AuditStep[] = [];
+  const workflowId = input.microWorkflowId ?? "adviser_model_portfolio_review";
   const [profile, accounts, holdings, adviserPortfolio] = await Promise.all([
     valueStreamClient.profile(input.customerId),
     valueStreamClient.accounts(input.customerId),
@@ -710,6 +719,11 @@ export async function composeAdviserModelPortfolioReview(
   });
 
   compositionSteps.push({
+    name: "select_adviser_micro_workflow",
+    status: "completed",
+    detail: `Selected ${workflowId} within the adviser platform capability.`
+  });
+  compositionSteps.push({
     name: "load_adviser_platform_context",
     status: "completed",
     detail: "Composed Adviser Entitlement, Client Profile, Platform Accounts, Model Portfolio, and Holdings APIs."
@@ -721,6 +735,8 @@ export async function composeAdviserModelPortfolioReview(
 
   return {
     capability: capability.id,
+    workflow_id: workflowId,
+    composition_mode: "capability_internal_micro_workflow",
     summary: `${profile.name}'s ${adviserPortfolio.modelPortfolioName} review shows a drift score of ${adviserPortfolio.driftScore}.`,
     client: {
       customer_id: profile.customerId,

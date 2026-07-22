@@ -1,10 +1,11 @@
-import React, { useEffect, useMemo, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   BadgeCheck,
   BarChart3,
   BrainCircuit,
   CheckCircle2,
+  ChevronRight,
   ClipboardList,
   Database,
   FileCode2,
@@ -15,7 +16,6 @@ import {
   Layers3,
   Loader2,
   LockKeyhole,
-  MessageSquareText,
   Network,
   PanelsTopLeft,
   Play,
@@ -27,7 +27,14 @@ import {
   ShieldCheck,
   SlidersHorizontal
 } from "lucide-react";
-import { demoScenarios, type DemoScenario } from "@agent-bridge/shared";
+import {
+  demoScenarios,
+  type DemoScenario,
+  type MicroWorkflowId,
+  type WorkflowActionType,
+  type WorkflowRun,
+  type WorkflowUiHint
+} from "@agent-bridge/shared";
 import "./styles.css";
 
 const gatewayBaseUrl = import.meta.env.VITE_GATEWAY_URL ?? "http://localhost:4100";
@@ -100,6 +107,7 @@ type AgentResponse = {
     policy_checks?: Array<{ name: string; status: string; detail: string }>;
     next_actions?: Array<Record<string, unknown>>;
   };
+  workflowRun?: WorkflowRun;
 };
 
 type AuditRecord = {
@@ -523,24 +531,135 @@ type A2uiSurface = {
   components: A2uiComponent[];
 };
 
+type AgenticWorkflow = {
+  id: string;
+  domain: "Personal Investing" | "Workplace Investing";
+  audience: "Client" | "Adviser" | "Member";
+  label: string;
+  title: string;
+  prompt: string;
+  capabilityId?: string;
+  input: Record<string, unknown>;
+  pattern: "interactive-report" | "advisor-pack" | "guided-simulation" | "transfer-triage";
+  microWorkflow: MicroWorkflowId;
+  apiPlan: string[];
+  runtime: Array<"long-task" | "durable" | "retry" | "queue" | "human-loop">;
+  components: string[];
+  narrative: string;
+  steps: Array<{ label: string; detail: string }>;
+};
+
+const agenticWorkflows: AgenticWorkflow[] = [
+  {
+    id: "isa-top-up-readiness",
+    domain: "Personal Investing",
+    audience: "Client",
+    label: "ISA top-up",
+    title: "ISA top-up readiness",
+    prompt: "Can I add £8,000 to my Fidelity Stocks and Shares ISA this tax year?",
+    capabilityId: "personal_investing_isa_allowance_review",
+    input: { customerId: "UK001", plannedIsaSubscription: 8000, isaWorkflowId: "isa_subscription_feasibility" },
+    pattern: "interactive-report",
+    microWorkflow: "isa_subscription_feasibility",
+    apiPlan: ["Profile", "Accounts", "ISA subscriptions", "Cash balance", "Policy audit"],
+    runtime: ["durable", "human-loop"],
+    components: ["allowance report", "top-up slider", "funding source", "confirmation gate"],
+    narrative: "A retail client gets a generated ISA allowance page and can adjust the top-up amount before confirmation.",
+    steps: [
+      { label: "Review allowance", detail: "Check this tax year's available ISA allowance." },
+      { label: "Choose amount", detail: "Adjust the top-up and see the remaining allowance." },
+      { label: "Confirm top-up", detail: "Review and explicitly approve the instruction." }
+    ]
+  },
+  {
+    id: "advisor-review-pack",
+    domain: "Personal Investing",
+    audience: "Adviser",
+    label: "Review pack",
+    title: "Adviser portfolio review pack",
+    prompt: "Prepare a model portfolio drift review for this advised client on the adviser platform.",
+    capabilityId: "adviser_platform_model_portfolio_review",
+    input: { customerId: "UK003", adviserFirmId: "FA-100", riskProfile: "balanced" },
+    pattern: "advisor-pack",
+    microWorkflow: "adviser_review_pack_generation",
+    apiPlan: ["Adviser entitlement", "Client profile", "Platform accounts", "Model portfolio", "Holdings", "Evidence pack"],
+    runtime: ["long-task", "queue", "retry", "human-loop", "durable"],
+    components: ["client queue", "drift report", "evidence pack", "compliance sign-off"],
+    narrative: "A 2B adviser starts a long-running evidence pack with queueing, retry, and compliance review.",
+    steps: [
+      { label: "Start pack", detail: "Place the client pack into the durable work queue." },
+      { label: "Review drift", detail: "Inspect portfolio drift and evidence completeness." },
+      { label: "Resolve exception", detail: "Retry the incomplete projection without restarting." },
+      { label: "Sign off", detail: "Approve the evidence pack for the client record." }
+    ]
+  },
+  {
+    id: "retirement-gap",
+    domain: "Workplace Investing",
+    audience: "Member",
+    label: "Goal gap",
+    title: "Retirement goal gap review",
+    prompt: "Am I on track to retire at 65, and what contribution change would close the gap?",
+    capabilityId: "workplace_pension_contribution_guidance",
+    input: { customerId: "UK003", desiredContributionRate: 12, targetRetirementAge: 65 },
+    pattern: "guided-simulation",
+    microWorkflow: "retirement_goal_gap_projection",
+    apiPlan: ["Member profile", "Pension balance", "Contribution schedule", "Projection", "Target income", "Policy audit"],
+    runtime: ["long-task", "durable", "retry"],
+    components: ["goal gap meter", "age stepper", "contribution slider", "scenario comparison"],
+    narrative: "A longer projection task can be resumed and retried while the user adjusts goal assumptions.",
+    steps: [
+      { label: "Set goal", detail: "Choose retirement age and contribution assumptions." },
+      { label: "Run projection", detail: "Continue a durable long-running forecast." },
+      { label: "Compare plan", detail: "Review the adjusted scenario against the current path." }
+    ]
+  }
+];
+
+const workflowById = new Map(agenticWorkflows.map((workflow) => [workflow.id, workflow]));
+
 function AgenticWebPage() {
-  const [prompt, setPrompt] = useState("");
-  const [activeQuestionId, setActiveQuestionId] = useState(agenticQuestions[0]?.id ?? "");
+  const [activeWorkflowId, setActiveWorkflowId] = useState(() => {
+    const saved = window.localStorage.getItem("agentic.activeWorkflowId");
+    return saved && workflowById.has(saved) ? saved : agenticWorkflows[0].id;
+  });
+  const activeWorkflow = workflowById.get(activeWorkflowId) ?? agenticWorkflows[0];
+  const [renderedWorkflowId, setRenderedWorkflowId] = useState(activeWorkflow.id);
+  const renderedWorkflow = workflowById.get(renderedWorkflowId) ?? agenticWorkflows[0];
+  const [prompt, setPrompt] = useState(() => window.localStorage.getItem("agentic.prompt") || activeWorkflow.prompt);
+  const assistantTextareaRef = useRef<HTMLTextAreaElement | null>(null);
   const [response, setResponse] = useState<AgentResponse | null>(null);
   const [audit, setAudit] = useState<AuditRecord | null>(null);
   const [events, setEvents] = useState<AguiRunEvent[]>([]);
   const [loading, setLoading] = useState(false);
+  const [workflowActionLoading, setWorkflowActionLoading] = useState(false);
   const [error, setError] = useState("");
+  const [workspaceStarted, setWorkspaceStarted] = useState(false);
+  const [workflowRun, setWorkflowRun] = useState<WorkflowRun | null>(null);
+  const [subscriptionAmount, setSubscriptionAmount] = useState(8000);
+  const [contributionRate, setContributionRate] = useState(10);
+  const [retirementAge, setRetirementAge] = useState(65);
 
-  const selectedQuestion = agenticQuestions.find((question) => question.id === activeQuestionId) ?? agenticQuestions[0];
-  const currentPrompt = prompt || selectedQuestion?.prompt || "";
-  const surface = useMemo(() => buildA2uiSurface(response, audit), [response, audit]);
-  const hasRun = Boolean(response || loading || error);
+  const currentPrompt = prompt || activeWorkflow.prompt;
+  const hasRun = workspaceStarted || Boolean(response || loading || error);
+  useEffect(() => {
+    window.scrollTo({ left: 0, top: window.scrollY });
+  }, []);
 
-  function chooseQuestion(question: (typeof agenticQuestions)[number]) {
-    setActiveQuestionId(question.id);
-    setPrompt(question.prompt);
-    setError("");
+  useEffect(() => {
+    window.localStorage.setItem("agentic.activeWorkflowId", activeWorkflowId);
+    window.localStorage.setItem("agentic.prompt", currentPrompt);
+  }, [activeWorkflowId, currentPrompt]);
+
+  useEffect(() => {
+    setPrompt(activeWorkflow.prompt);
+  }, [activeWorkflow]);
+
+  function chooseWorkflow(workflow: AgenticWorkflow) {
+    setActiveWorkflowId(workflow.id);
+    if (hasRun) {
+      window.requestAnimationFrame(() => assistantTextareaRef.current?.focus());
+    }
   }
 
   async function submitAgenticRequest(event?: React.FormEvent) {
@@ -548,8 +667,19 @@ function AgenticWebPage() {
     const question = currentPrompt.trim();
     if (!question) return;
 
-    const scenario = agenticQuestions.find((item) => item.prompt === question) ?? selectedQuestion;
-    const scenarioDefinition = scenarios.find((item) => item.id === scenario?.id);
+    const desiredContribution = Number(activeWorkflow.input.desiredContributionRate ?? 10);
+    const desiredRetirementAge = Number(activeWorkflow.input.targetRetirementAge ?? 65);
+    const isRerunOfCurrentWorkflow = workspaceStarted && activeWorkflow.id === renderedWorkflowId;
+    const submittedContribution = isRerunOfCurrentWorkflow ? contributionRate : desiredContribution;
+    const submittedRetirementAge = isRerunOfCurrentWorkflow ? retirementAge : desiredRetirementAge;
+    setRenderedWorkflowId(activeWorkflow.id);
+    setWorkspaceStarted(true);
+    setWorkflowRun(null);
+    if (activeWorkflow.id === "isa-top-up-readiness") setSubscriptionAmount(8000);
+    if (activeWorkflow.domain === "Workplace Investing") {
+      setContributionRate(Number.isFinite(desiredContribution) ? desiredContribution : 10);
+      setRetirementAge(Number.isFinite(desiredRetirementAge) ? desiredRetirementAge : 65);
+    }
     setLoading(true);
     setError("");
     setAudit(null);
@@ -557,7 +687,15 @@ function AgenticWebPage() {
     setEvents([]);
 
     try {
-      const input = scenarioDefinition?.input ?? { customerId: "UK001" };
+      const input = {
+        ...activeWorkflow.input,
+        microWorkflowId: activeWorkflow.microWorkflow,
+        ...(activeWorkflow.id === "isa-top-up-readiness" ? { plannedIsaSubscription: subscriptionAmount } : {}),
+        ...(activeWorkflow.domain === "Workplace Investing" ? {
+          desiredContributionRate: submittedContribution,
+          targetRetirementAge: submittedRetirementAge
+        } : {})
+      };
       const data = await runAguiRequest(
         {
           ...input,
@@ -577,6 +715,7 @@ function AgenticWebPage() {
         }
       );
       setResponse(data);
+      setWorkflowRun(data.workflowRun ?? null);
 
       const nextAudit = data.result?.audit_trace_id
         ? await fetch(`${gatewayBaseUrl}/audit/${data.result.audit_trace_id}`)
@@ -601,17 +740,58 @@ function AgenticWebPage() {
     }
   }
 
+  async function performWorkflowAction(
+    action: WorkflowActionType,
+    payload?: Record<string, unknown>
+  ) {
+    if (!workflowRun) return;
+    const currentStep = workflowRun.steps[workflowRun.currentStepIndex];
+    if (!currentStep) return;
+
+    setWorkflowActionLoading(true);
+    setError("");
+    try {
+      const actionResponse = await fetch(`${gatewayBaseUrl}/workflow-runs/${workflowRun.id}/actions`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ action, stepId: currentStep.id, payload })
+      });
+      if (!actionResponse.ok) {
+        const detail = await actionResponse.json().catch(() => null) as { error?: string } | null;
+        throw new Error(detail?.error ?? `Workflow action failed with ${actionResponse.status}`);
+      }
+      const nextRun = await actionResponse.json() as WorkflowRun;
+      setWorkflowRun(nextRun);
+      setResponse((current) => current ? { ...current, result: nextRun.result } : current);
+      if (nextRun.auditTraceId !== audit?.traceId) {
+        const nextAudit = await fetch(`${gatewayBaseUrl}/audit/${nextRun.auditTraceId}`)
+          .then((auditResponse) => auditResponse.ok ? auditResponse.json() as Promise<AuditRecord> : null)
+          .catch(() => null);
+        setAudit(nextAudit);
+      }
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : "Workflow action failed");
+    } finally {
+      setWorkflowActionLoading(false);
+    }
+  }
+
+  const hasIntentBoundary = Boolean(
+    response?.resolution.status && response.resolution.status !== "resolved"
+  );
+
   return (
     <main className={hasRun ? "agentic-shell engaged" : "agentic-shell"}>
       <section className="agentic-topbar">
         <a href="/" className="console-link">
           <PanelsTopLeft size={17} />
-          <span>Management Console</span>
+          <span>Agentic Web</span>
         </a>
         <div className="agentic-system">
-          <span>AG-UI event loop</span>
-          <span>A2UI surface renderer</span>
-          <span>MCP-compatible gateway</span>
+          <span className="live-chip">Client/adviser experience</span>
+          <span>Dynamic A2UI page</span>
+          <span>AG-UI runtime hidden</span>
+          <span>Durable workflow demo</span>
         </div>
       </section>
 
@@ -619,37 +799,41 @@ function AgenticWebPage() {
         <aside className="agentic-assistant-panel">
           <div className="assistant-panel-head">
             <div>
-              <span>Agentic Web</span>
-              <strong>Financial capability agent</strong>
+              <span>Business scenarios</span>
+              <strong>Choose a user journey</strong>
             </div>
             <SlidersHorizontal size={18} />
           </div>
 
+          <ScenarioModeStrip activeWorkflow={activeWorkflow} />
+
           <form className="agentic-compose compact" onSubmit={(event) => void submitAgenticRequest(event)}>
             <label>
-              <span>Ask through governed capabilities</span>
+              <span>Customer or adviser asks</span>
               <textarea
+                ref={assistantTextareaRef}
                 value={currentPrompt}
                 onChange={(event) => setPrompt(event.target.value)}
-                placeholder="Ask about ISA allowance, drawdown, workplace pension, adviser model portfolio, or governance boundaries."
+                placeholder="Ask a financial business question..."
               />
             </label>
             <button className="agentic-send" type="submit" disabled={loading || !currentPrompt.trim()}>
               {loading ? <Loader2 className="spin" size={18} /> : <SendHorizontal size={18} />}
-              <span>Send</span>
+              <span>Generate workspace</span>
             </button>
           </form>
 
           <div className="agentic-question-list">
-            {agenticQuestions.map((question) => (
+            {agenticWorkflows.map((workflow) => (
               <button
-                key={question.id}
+                key={workflow.id}
                 type="button"
-                className={question.id === activeQuestionId ? "agentic-question active" : "agentic-question"}
-                onClick={() => chooseQuestion(question)}
+                className={workflow.id === activeWorkflowId ? "agentic-question active" : "agentic-question"}
+                onClick={() => chooseWorkflow(workflow)}
               >
-                <strong>{question.label}</strong>
-                <span>{question.prompt}</span>
+                <strong>{workflow.label}</strong>
+                <span>{workflow.narrative}</span>
+                <small>{workflow.domain} / {workflow.audience}</small>
               </button>
             ))}
           </div>
@@ -658,41 +842,50 @@ function AgenticWebPage() {
         <section className="agentic-main">
           {!hasRun ? (
             <div className="agentic-start">
+              <div className="agentic-orbit" aria-hidden="true">
+                <span />
+                <span />
+                <span />
+              </div>
               <div className="agentic-brand-mark">
                 <Search size={28} />
               </div>
-              <h1>Ask the enterprise capability layer.</h1>
+              <p className="agentic-kicker">Natural language in. Business workspace out.</p>
+              <h1>Generate the next financial workflow.</h1>
               <form className="agentic-compose hero-compose" onSubmit={(event) => void submitAgenticRequest(event)}>
                 <textarea
                   value={currentPrompt}
                   onChange={(event) => setPrompt(event.target.value)}
-                  placeholder="Ask a governed financial question..."
+                  placeholder="Ask as a client, member, or adviser..."
                   aria-label="Agentic question"
                 />
                 <button className="agentic-send" type="submit" disabled={!currentPrompt.trim()}>
                   <SendHorizontal size={18} />
-                  <span>Send</span>
+                  <span>Generate</span>
                 </button>
               </form>
               <div className="agentic-suggestions">
-                {agenticQuestions.slice(0, 6).map((question) => (
-                  <button key={question.id} type="button" onClick={() => chooseQuestion(question)}>
-                    <strong>{question.label}</strong>
-                    <span>{question.tags[1]}</span>
+                {agenticWorkflows.map((workflow) => (
+                  <button key={workflow.id} type="button" onClick={() => chooseWorkflow(workflow)}>
+                    <strong>{workflow.label}</strong>
+                    <span>{workflow.domain} / {workflow.microWorkflow.replaceAll("_", " ")}</span>
                   </button>
                 ))}
               </div>
+              <DemoAssemblyPreview activeWorkflow={activeWorkflow} />
             </div>
           ) : (
             <>
               <div className="agentic-result-head">
                 <div>
-                  <span>A2UI surface</span>
-                  <h1>{surface.intent}</h1>
+                  <span>{hasIntentBoundary ? "Intent boundary" : "Generated business workspace"}</span>
+                  <h1>{hasIntentBoundary ? "Request recognised" : renderedWorkflow.title}</h1>
                 </div>
                 <div className="surface-meta">
-                  <span>{response?.resolution.status ?? (loading ? "running" : "error")}</span>
-                  <span>{response?.resolution.capabilityId?.replaceAll("_", " ") ?? "no capability selected"}</span>
+                  <span>{hasIntentBoundary ? response?.resolution.intent ?? "outside catalog" : renderedWorkflow.audience}</span>
+                  <span>{response?.resolution.status ?? (loading ? "composing" : "ready")}</span>
+                  {!hasIntentBoundary ? <span>{renderedWorkflow.microWorkflow.replaceAll("_", " ")}</span> : null}
+                  {workflowRun ? <span>plan v{workflowRun.agent.planVersion}</span> : null}
                 </div>
               </div>
 
@@ -703,35 +896,807 @@ function AgenticWebPage() {
                 </section>
               ) : null}
 
-              <A2uiSurfaceView surface={surface} loading={loading} />
+              {hasIntentBoundary && response ? (
+                <IntentBoundarySurface response={response} />
+              ) : (
+                <>
+                  <MicroWorkflowProgress workflow={renderedWorkflow} run={workflowRun} />
+                  <AgentWorkBrief run={workflowRun} loading={loading} />
+                  <GeneratedBusinessWorkspace
+                    workflow={renderedWorkflow}
+                    response={response}
+                    audit={audit}
+                    loading={loading}
+                    subscriptionAmount={subscriptionAmount}
+                    setSubscriptionAmount={setSubscriptionAmount}
+                    contributionRate={contributionRate}
+                    setContributionRate={setContributionRate}
+                    retirementAge={retirementAge}
+                    setRetirementAge={setRetirementAge}
+                    workflowRun={workflowRun}
+                    workflowActionLoading={workflowActionLoading}
+                    performWorkflowAction={performWorkflowAction}
+                  />
+                </>
+              )}
             </>
           )}
         </section>
-
-        <aside className="agentic-event-panel">
-          <div className="assistant-panel-head">
-            <div>
-              <span>AG-UI stream</span>
-              <strong>{events.length ? `${events.length} events` : "waiting"}</strong>
-            </div>
-            <MessageSquareText size={18} />
-          </div>
-          <div className="agui-event-list">
-            {events.length ? (
-              events.map((event) => (
-                <article className={`agui-event ${event.status}`} key={event.id}>
-                  <span>{event.type}</span>
-                  <strong>{event.label}</strong>
-                  <p>{event.detail}</p>
-                </article>
-              ))
-            ) : (
-              <p className="muted">Send a question to populate the event stream and mount the generated surface.</p>
-            )}
-          </div>
-        </aside>
       </section>
     </main>
+  );
+}
+
+function IntentBoundarySurface({ response }: { response: AgentResponse }) {
+  const status = response.resolution.status ?? "unsupported";
+  const title = status === "needs_clarification"
+    ? "One detail is needed before I can act"
+    : status === "denied"
+      ? "This request was safely stopped"
+      : "I understood the request, but it is outside this workspace";
+  const capabilityNames: Record<string, string> = {
+    personal_investing_isa_allowance_review: "ISA allowance review",
+    sipp_drawdown_pathway_review: "SIPP drawdown review",
+    workplace_pension_contribution_guidance: "Workplace pension guidance",
+    adviser_platform_model_portfolio_review: "Adviser portfolio review"
+  };
+  const available = response.resolution.availableCapabilities ?? [];
+
+  return (
+    <section className={`intent-boundary-surface ${status}`}>
+      <div className="intent-boundary-primary">
+        <div className="boundary-signal">
+          {status === "denied" ? <ShieldAlert size={22} /> : <ShieldCheck size={22} />}
+          <span>{status.replaceAll("_", " ")}</span>
+        </div>
+        <h2>{title}</h2>
+        <p>{response.resolution.reasoning}</p>
+        <blockquote>{response.prompt}</blockquote>
+      </div>
+      <aside className="intent-boundary-next">
+        <span>Recognised intent</span>
+        <strong>{response.resolution.intent ?? "Unclassified request"}</strong>
+        {response.resolution.questions?.map((question) => <p key={question}>{question}</p>)}
+        {available.length ? (
+          <div className="boundary-capabilities">
+            <small>This workspace can act on</small>
+            {available.map((capability) => (
+              <span key={capability}>{capabilityNames[capability] ?? capability.replaceAll("_", " ")}</span>
+            ))}
+          </div>
+        ) : null}
+      </aside>
+      <footer>
+        <CheckCircle2 size={15} />
+        <span>No financial workflow was started and no customer data API was called.</span>
+      </footer>
+    </section>
+  );
+}
+
+function ScenarioModeStrip({ activeWorkflow }: { activeWorkflow: AgenticWorkflow }) {
+  const modes = [
+    { label: "Interactive", value: "interactive-report", icon: <BarChart3 size={15} /> },
+    { label: "Advisor", value: "advisor-pack", icon: <ClipboardList size={15} /> },
+    { label: "Simulation", value: "guided-simulation", icon: <Gauge size={15} /> }
+  ];
+
+  return (
+    <div className="scenario-mode-strip" aria-label="Scenario interaction pattern">
+      {modes.map((mode) => (
+        <span className={activeWorkflow.pattern === mode.value ? "active" : ""} key={mode.value}>
+          {mode.icon}
+          {mode.label}
+        </span>
+      ))}
+    </div>
+  );
+}
+
+function DemoAssemblyPreview({ activeWorkflow }: { activeWorkflow: AgenticWorkflow }) {
+  return (
+    <div className="demo-assembly-preview" aria-label="Demo component assembly">
+      <div>
+        <Network size={16} />
+        <span>Generated components</span>
+      </div>
+      <div className="assembly-grid">
+        {activeWorkflow.components.map((component, index) => (
+          <span key={component} style={{ animationDelay: `${index * 80}ms` }}>
+            {component}
+          </span>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MicroWorkflowProgress({
+  workflow,
+  run
+}: {
+  workflow: AgenticWorkflow;
+  run: WorkflowRun | null;
+}) {
+  const steps = run?.steps ?? workflow.steps.map((step) => ({ ...step, status: "waiting" as const }));
+  const currentStep = run?.currentStepIndex ?? 0;
+
+  return (
+    <nav className="micro-workflow-progress" aria-label="Current business workflow">
+      {steps.map((step, index) => (
+        <button
+          type="button"
+          className={step.status === "completed" ? "completed" : index === currentStep ? "current" : ""}
+          key={step.label}
+          disabled
+          aria-current={index === currentStep ? "step" : undefined}
+        >
+          <span>{step.status === "completed" ? <CheckCircle2 size={15} /> : index + 1}</span>
+          <div>
+            <strong>{step.label}</strong>
+            <p>{step.detail}</p>
+          </div>
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+type PerformWorkflowAction = (
+  action: WorkflowActionType,
+  payload?: Record<string, unknown>
+) => Promise<void>;
+
+function AgentWorkBrief({ run, loading }: { run: WorkflowRun | null; loading: boolean }) {
+  const latestObservation = run?.observations[run.observations.length - 1];
+  const latestRevision = run?.planRevisions[run.planRevisions.length - 1];
+  const revised = Boolean(run && run.agent.planVersion > 1);
+
+  return (
+    <section className={`agent-work-brief ${revised ? "revised" : ""}`} aria-label="Agent work brief">
+      <article>
+        <span>Agent objective</span>
+        <strong>{loading ? "Understanding the request" : run?.agent.currentActivity ?? "Preparing a business plan"}</strong>
+        <p>{run?.agent.objective ?? "Resolving intent, policy boundaries, and the right workflow."}</p>
+      </article>
+      <article>
+        <span>Plan decision</span>
+        <strong>{latestRevision ? `Plan v${latestRevision.version}` : "Planning"}</strong>
+        <p>{latestRevision?.reason ?? "Waiting for capability evidence before selecting the next steps."}</p>
+      </article>
+      <article>
+        <span>{run?.agent.needsUser ? "Needs your decision" : "Next action"}</span>
+        <strong>{run?.agent.needsUser ? "Human in the loop" : "Agent can continue"}</strong>
+        <p>{run?.agent.nextAction ?? "The next action will appear when the plan is ready."}</p>
+      </article>
+      {latestObservation ? (
+        <div className="agent-observation">
+          <BrainCircuit size={16} />
+          <span>Latest observation</span>
+          <p>{latestObservation.summary}</p>
+        </div>
+      ) : null}
+    </section>
+  );
+}
+
+function GeneratedBusinessWorkspace({
+  workflow,
+  response,
+  audit,
+  loading,
+  subscriptionAmount,
+  setSubscriptionAmount,
+  contributionRate,
+  setContributionRate,
+  retirementAge,
+  setRetirementAge,
+  workflowRun,
+  workflowActionLoading,
+  performWorkflowAction
+}: {
+  workflow: AgenticWorkflow;
+  response: AgentResponse | null;
+  audit: AuditRecord | null;
+  loading: boolean;
+  subscriptionAmount: number;
+  setSubscriptionAmount: (value: number) => void;
+  contributionRate: number;
+  setContributionRate: (value: number) => void;
+  retirementAge: number;
+  setRetirementAge: (value: number) => void;
+  workflowRun: WorkflowRun | null;
+  workflowActionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+}) {
+  const result = response?.result ?? {};
+  const sourceApis = response?.result?.source_apis ?? workflow.apiPlan.map((api) => `${api} API`);
+  const confidence = response ? Math.round(response.resolution.confidence * 100) : 0;
+  const currentStep = workflowRun?.currentStepIndex ?? 0;
+  const currentRunStep = workflowRun?.steps[currentStep];
+  const isLastStep = currentStep === (workflowRun?.steps.length ?? workflow.steps.length) - 1;
+  const retryRequired = Boolean(currentRunStep?.allowedActions.includes("retry") && currentRunStep.attempts === 0);
+  const panelOwnsAction = Boolean(
+    currentRunStep?.allowedActions.includes("approve") ||
+    retryRequired ||
+    currentRunStep?.uiHint === "durable_queue" ||
+    currentRunStep?.uiHint === "gap_options"
+  );
+  const advancePayload = currentRunStep?.uiHint === "amount_slider"
+    ? { plannedIsaSubscription: subscriptionAmount }
+    : currentRunStep?.uiHint === "goal_controls"
+      ? { desiredContributionRate: contributionRate, targetRetirementAge: retirementAge }
+      : undefined;
+
+  return (
+    <div className="generated-workspace">
+      {loading ? (
+        <section className="a2ui-loading business-loading">
+          <Loader2 className="spin" size={24} />
+          <p>Generating a durable business page from intent, policy, APIs, and workflow state.</p>
+        </section>
+      ) : null}
+
+      <section className="workflow-focus-header">
+        <div>
+          <span>Now working on</span>
+          <h2>{currentRunStep?.label ?? workflow.steps[currentStep]?.label}</h2>
+          <p>{currentRunStep?.detail ?? workflow.steps[currentStep]?.detail}</p>
+        </div>
+        <div className="workflow-focus-status">
+          <span>{currentStep + 1} of {workflowRun?.steps.length ?? workflow.steps.length}</span>
+          <strong>{response ? `${confidence}% confidence` : loading ? "Working" : "Ready"}</strong>
+        </div>
+      </section>
+
+      {!loading && workflow.id === "isa-top-up-readiness" ? (
+        <IsaTopUpWorkspace
+          result={result}
+          amount={subscriptionAmount}
+          setAmount={setSubscriptionAmount}
+          workflowRun={workflowRun}
+          actionLoading={workflowActionLoading}
+          performWorkflowAction={performWorkflowAction}
+          uiHint={currentRunStep?.uiHint}
+        />
+      ) : null}
+
+      {!loading && workflow.id === "advisor-review-pack" ? (
+        <AdvisorPackWorkspace
+          result={result}
+          workflowRun={workflowRun}
+          actionLoading={workflowActionLoading}
+          performWorkflowAction={performWorkflowAction}
+          uiHint={currentRunStep?.uiHint}
+        />
+      ) : null}
+
+      {!loading && workflow.id === "retirement-gap" ? (
+        <WorkplaceSimulationWorkspace
+          result={result}
+          contributionRate={contributionRate}
+          setContributionRate={setContributionRate}
+          retirementAge={retirementAge}
+          setRetirementAge={setRetirementAge}
+          workflowRun={workflowRun}
+          actionLoading={workflowActionLoading}
+          performWorkflowAction={performWorkflowAction}
+          uiHint={currentRunStep?.uiHint}
+        />
+      ) : null}
+
+      {!loading && workflowRun && !panelOwnsAction ? <div className="workflow-action-bar backend-action-bar">
+        <span className="run-identity">Run {workflowRun.id}</span>
+        <span>{isLastStep ? "Final review" : `Next: ${workflowRun.steps[currentStep + 1]?.label}`}</span>
+        <button
+          type="button"
+          className="primary"
+          onClick={() => void performWorkflowAction("advance", advancePayload)}
+          disabled={workflowActionLoading || workflowRun.status === "completed"}
+        >
+          {workflowActionLoading ? <Loader2 className="spin" size={16} /> : null}
+          <span>{isLastStep ? "Complete workflow" : "Continue"}</span>
+          <ChevronRight size={17} />
+        </button>
+      </div> : null}
+
+      {!loading ? <details className="workflow-evidence">
+        <summary>
+          <ShieldCheck size={17} />
+          <span>How this was completed</span>
+          <small>{sourceApis.length} APIs · {workflowRun?.id ?? "run pending"}</small>
+        </summary>
+        <div className="api-flow">
+          {workflow.apiPlan.map((api, index) => (
+            <span key={api}><i>{index + 1}</i>{api}</span>
+          ))}
+        </div>
+        <div className="trace-chip-list">
+          <span>{response?.result?.audit_trace_id ?? audit?.traceId ?? "audit pending"}</span>
+          <span>{response?.resolution.capabilityId?.replaceAll("_", " ") ?? workflow.microWorkflow.replaceAll("_", " ")}</span>
+          <span>{workflow.runtime.join(" / ")}</span>
+        </div>
+      </details> : null}
+    </div>
+  );
+}
+
+function IsaTopUpWorkspace({
+  result,
+  amount,
+  setAmount,
+  workflowRun,
+  actionLoading,
+  performWorkflowAction,
+  uiHint
+}: {
+  result: Record<string, unknown>;
+  amount: number;
+  setAmount: (value: number) => void;
+  workflowRun: WorkflowRun | null;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+  uiHint?: WorkflowUiHint;
+}) {
+  const remaining = readCurrencyValue(result, ["remaining_allowance"]) ?? 0;
+  const used = readCurrencyValue(result, ["subscribed_so_far"]) ?? 0;
+  const planned = amount;
+  const over = planned > remaining;
+  const allowanceTotal = Math.max(20000, used + remaining);
+  const availableAfterTopUp = Math.max(allowanceTotal - used - planned, 0);
+
+  if (uiHint === "allowance_donut") {
+    return (
+      <section className="business-card chart-card">
+        <div className="a2ui-card-title">
+          <BarChart3 size={20} />
+          <h2>ISA allowance allocation</h2>
+        </div>
+        <DonutChart
+          centerLabel="Tax-year allowance"
+          centerValue={formatMetricValue(allowanceTotal, "GBP")}
+          segments={[
+            { label: "Already used", value: used, tone: "blue", formatted: formatMetricValue(used, "GBP") },
+            { label: "Planned top-up", value: planned, tone: over ? "red" : "green", formatted: formatMetricValue(planned, "GBP") },
+            { label: "Available after", value: availableAfterTopUp, tone: "gold", formatted: formatMetricValue(availableAfterTopUp, "GBP") }
+          ]}
+        />
+      </section>
+    );
+  }
+
+  if (uiHint === "amount_slider") {
+    return (
+      <section className="business-card interaction-card">
+        <div className="a2ui-card-title">
+          <SlidersHorizontal size={20} />
+          <h2>Adjust subscription</h2>
+        </div>
+        <label className="range-control">
+          <span>Top-up amount</span>
+          <input
+            type="range"
+            min="1000"
+            max="16000"
+            step="500"
+            value={amount}
+            onChange={(event) => setAmount(Number(event.target.value))}
+          />
+          <strong>{formatMetricValue(amount, "GBP")}</strong>
+        </label>
+        <div className={over ? "decision-banner warning" : "decision-banner"}>
+          {over ? "This amount exceeds the available allowance and needs adjustment." : "This amount is inside the synthetic allowance check."}
+        </div>
+      </section>
+    );
+  }
+
+  return (
+    <HumanApprovalPanel
+      title="Customer confirmation"
+      body={`Confirm a ${formatMetricValue(amount, "GBP")} ISA top-up. Submission remains gated until the customer explicitly approves this amount.`}
+      workflowRun={workflowRun}
+      actionLoading={actionLoading}
+      performWorkflowAction={performWorkflowAction}
+    />
+  );
+}
+
+function AdvisorPackWorkspace({
+  result,
+  workflowRun,
+  actionLoading,
+  performWorkflowAction,
+  uiHint
+}: {
+  result: Record<string, unknown>;
+  workflowRun: WorkflowRun | null;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+  uiHint?: WorkflowUiHint;
+}) {
+  const drift = Number((result.portfolio_review as Record<string, unknown> | undefined)?.drift_score ?? 5.6);
+
+  if (uiHint === "durable_queue") {
+    return <QueuePanel run={workflowRun} actionLoading={actionLoading} performWorkflowAction={performWorkflowAction} />;
+  }
+
+  if (uiHint === "portfolio_drift") {
+    return (
+      <section className="business-card chart-card">
+        <div className="a2ui-card-title">
+          <BarChart3 size={20} />
+          <h2>Portfolio drift</h2>
+        </div>
+        <div className="chart-composition">
+          <DonutChart
+            centerLabel="Portfolio"
+            centerValue="6 assets"
+            segments={[
+              { label: "Global equity", value: 55, tone: "green", formatted: "55%" },
+              { label: "Fixed income", value: 25, tone: "blue", formatted: "25%" },
+              { label: "Alternatives", value: 12, tone: "gold", formatted: "12%" },
+              { label: "Cash", value: 8, tone: "muted", formatted: "8%" }
+            ]}
+          />
+          <div className="drift-analysis">
+            <MiniBar label="Model drift" value={drift} max={10} tone={drift > 5 ? "gold" : "green"} unit="score" />
+            <MiniBar label="Evidence completeness" value={82} max={100} tone="green" unit="%" />
+            <MiniBar label="Compliance review" value={64} max={100} tone="blue" unit="%" />
+            <div className="decision-banner">Equity is 4.2% above the balanced model target.</div>
+          </div>
+        </div>
+      </section>
+    );
+  }
+
+  if (uiHint === "retry_checkpoint") {
+    return <RetryPanel run={workflowRun} actionLoading={actionLoading} performWorkflowAction={performWorkflowAction} />;
+  }
+
+  return (
+      <HumanApprovalPanel
+        title="Compliance sign-off"
+        body="The generated evidence pack waits for adviser sign-off before it can be sent to the client record."
+        workflowRun={workflowRun}
+        actionLoading={actionLoading}
+        performWorkflowAction={performWorkflowAction}
+      />
+  );
+}
+
+function WorkplaceSimulationWorkspace({
+  result,
+  contributionRate,
+  setContributionRate,
+  retirementAge,
+  setRetirementAge,
+  workflowRun,
+  actionLoading,
+  performWorkflowAction,
+  uiHint
+}: {
+  result: Record<string, unknown>;
+  contributionRate: number;
+  setContributionRate: (value: number) => void;
+  retirementAge: number;
+  setRetirementAge: (value: number) => void;
+  workflowRun: WorkflowRun | null;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+  uiHint?: WorkflowUiHint;
+}) {
+  const probabilityRaw = String((result.projected_outcome as Record<string, unknown> | undefined)?.goal_probability ?? "72%");
+  const probability = Number(probabilityRaw.replace(/[^\d.]/g, "")) || 72;
+  const adjustedProbability = Math.min(96, Math.round(probability + (contributionRate - 10) * 3 + (retirementAge - 65) * 2));
+
+  const controls = (
+    <section className="business-card interaction-card">
+      <div className="a2ui-card-title">
+        <SlidersHorizontal size={20} />
+        <h2>Change assumptions</h2>
+      </div>
+      <label className="range-control">
+        <span>Contribution rate</span>
+        <input type="range" min="4" max="15" step="1" value={contributionRate} onChange={(event) => setContributionRate(Number(event.target.value))} />
+        <strong>{contributionRate}%</strong>
+      </label>
+      <label className="range-control">
+        <span>Retirement age</span>
+        <input type="range" min="60" max="70" step="1" value={retirementAge} onChange={(event) => setRetirementAge(Number(event.target.value))} />
+        <strong>{retirementAge}</strong>
+      </label>
+    </section>
+  );
+
+  const comparison = (
+      <section className="business-card chart-card">
+        <div className="a2ui-card-title">
+          <BarChart3 size={20} />
+          <h2>Goal gap simulator</h2>
+        </div>
+        <MiniBar label="Current confidence" value={probability} max={100} tone="blue" unit="%" />
+        <MiniBar label="Adjusted scenario" value={adjustedProbability} max={100} tone="green" unit="%" />
+        <MiniBar label="Employer match captured" value={contributionRate >= 8 ? 100 : 64} max={100} tone="gold" unit="%" />
+      </section>
+  );
+
+  if (uiHint === "goal_controls") return controls;
+  if (uiHint === "gap_options") {
+    return (
+      <GapOptionsPanel
+        contributionRate={contributionRate}
+        setContributionRate={setContributionRate}
+        retirementAge={retirementAge}
+        setRetirementAge={setRetirementAge}
+        actionLoading={actionLoading}
+        performWorkflowAction={performWorkflowAction}
+      />
+    );
+  }
+  if (uiHint === "long_task") {
+    return <LongTaskPanel run={workflowRun} actionLoading={actionLoading} performWorkflowAction={performWorkflowAction} />;
+  }
+  return comparison;
+}
+
+function GapOptionsPanel({
+  contributionRate,
+  setContributionRate,
+  retirementAge,
+  setRetirementAge,
+  actionLoading,
+  performWorkflowAction
+}: {
+  contributionRate: number;
+  setContributionRate: (value: number) => void;
+  retirementAge: number;
+  setRetirementAge: (value: number) => void;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+}) {
+  const options = [
+    { contribution: 14, age: 65, title: "Save more now", detail: "Increase contributions while keeping retirement at 65." },
+    { contribution: 12, age: 67, title: "Work two years longer", detail: "Keep contributions stable and extend the investment horizon." },
+    { contribution: 14, age: 67, title: "Close the gap", detail: "Combine both changes for the strongest projected outcome." }
+  ];
+
+  const selectOption = (contribution: number, age: number) => {
+    setContributionRate(contribution);
+    setRetirementAge(age);
+    void performWorkflowAction("advance", {
+      desiredContributionRate: contribution,
+      targetRetirementAge: age
+    });
+  };
+
+  return (
+    <section className="business-card gap-options-card">
+      <div className="a2ui-card-title">
+        <GitBranch size={20} />
+        <h2>Agent-generated ways to close the gap</h2>
+      </div>
+      <p>The first projection is below the planning threshold, so the Agent added a decision step and prepared three viable alternatives.</p>
+      <div className="gap-option-list">
+        {options.map((option) => {
+          const selected = contributionRate === option.contribution && retirementAge === option.age;
+          return (
+            <button
+              key={`${option.contribution}-${option.age}`}
+              type="button"
+              className={selected ? "selected" : ""}
+              onClick={() => selectOption(option.contribution, option.age)}
+              disabled={actionLoading}
+            >
+              <span>{option.title}</span>
+              <strong>{option.contribution}% · age {option.age}</strong>
+              <small>{option.detail}</small>
+              <ChevronRight size={17} />
+            </button>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
+function MiniBar({
+  label,
+  value,
+  max,
+  tone,
+  unit
+}: {
+  label: string;
+  value: number;
+  max: number;
+  tone: "green" | "blue" | "gold" | "red";
+  unit: string;
+}) {
+  return (
+    <div className="a2ui-chart-row">
+      <span>{label}</span>
+      <div>
+        <i className={`tone-${tone}`} style={{ width: `${Math.min(100, Math.max(4, (value / max) * 100))}%` }} />
+      </div>
+      <strong>{formatMetricValue(value, unit)}</strong>
+    </div>
+  );
+}
+
+function DonutChart({
+  centerLabel,
+  centerValue,
+  segments
+}: {
+  centerLabel: string;
+  centerValue: string;
+  segments: Array<{
+    label: string;
+    value: number;
+    tone: "green" | "blue" | "gold" | "red" | "muted";
+    formatted: string;
+  }>;
+}) {
+  const total = Math.max(segments.reduce((sum, segment) => sum + Math.max(segment.value, 0), 0), 1);
+  let cursor = 0;
+  const stops = segments.map((segment) => {
+    const start = cursor;
+    cursor += (Math.max(segment.value, 0) / total) * 100;
+    return `var(--donut-${segment.tone}) ${start}% ${cursor}%`;
+  });
+
+  return (
+    <div className="donut-chart">
+      <div className="donut-visual" style={{ background: `conic-gradient(${stops.join(", ")})` }} role="img" aria-label={segments.map((segment) => `${segment.label} ${segment.formatted}`).join(", ")}>
+        <div>
+          <strong>{centerValue}</strong>
+          <span>{centerLabel}</span>
+        </div>
+      </div>
+      <div className="donut-legend">
+        {segments.map((segment) => (
+          <div key={segment.label}>
+            <i className={`donut-swatch ${segment.tone}`} />
+            <span>{segment.label}</span>
+            <strong>{segment.formatted}</strong>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function LongTaskPanel({
+  run,
+  actionLoading,
+  performWorkflowAction
+}: {
+  run: WorkflowRun | null;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+}) {
+  const currentStep = run?.steps[run.currentStepIndex];
+  const complete = Boolean(currentStep && currentStep.attempts > 0);
+
+  return (
+    <section className={`business-card long-task-card ${complete ? "complete" : ""}`}>
+      <div className="a2ui-card-title">
+        <Route size={20} />
+        <h2>Durable retirement projection</h2>
+      </div>
+      <p>The forecast can continue in the background. Completed checkpoints are retained if the user leaves this page.</p>
+      <div className="long-task-timeline">
+        <span className="complete"><CheckCircle2 size={15} /> Account data saved</span>
+        <span className="complete"><CheckCircle2 size={15} /> Contribution history saved</span>
+        <span className={complete ? "complete" : "running"}>
+          {actionLoading ? <Loader2 className="spin" size={15} /> : complete ? <CheckCircle2 size={15} /> : <Route size={15} />}
+          {complete ? "Projection recovered from checkpoint" : actionLoading ? "Projection running" : "Projection paused at checkpoint"}
+        </span>
+      </div>
+      <button type="button" onClick={() => void performWorkflowAction("retry")} disabled={actionLoading || complete || !run}>
+        {actionLoading ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+        <span>{complete ? "Checkpoint recovered" : actionLoading ? "Continuing" : "Resume projection"}</span>
+      </button>
+    </section>
+  );
+}
+
+function RetryPanel({
+  run,
+  actionLoading,
+  performWorkflowAction
+}: {
+  run: WorkflowRun | null;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+}) {
+  const currentStep = run?.steps[run.currentStepIndex];
+  const recovered = Boolean(currentStep && currentStep.attempts > 0);
+  const state = actionLoading ? "retrying" : recovered ? "recovered" : "degraded";
+  const copy = actionLoading
+      ? "Retrying projection service with preserved successful API results."
+      : recovered
+        ? "Projection recovered. The generated page updated without restarting the workflow."
+        : "Projection service is degraded. Holdings and policy results are durable and can be reused.";
+
+  return (
+    <section className={`business-card retry-card ${state}`}>
+      <div className="a2ui-card-title">
+        <Route size={20} />
+        <h2>Retryable service</h2>
+      </div>
+      <p>{copy}</p>
+      <button type="button" onClick={() => void performWorkflowAction("retry")} disabled={actionLoading || recovered || !run}>
+        {actionLoading ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+        <span>{recovered ? "Retry complete" : "Retry projection"}</span>
+      </button>
+    </section>
+  );
+}
+
+function QueuePanel({
+  run,
+  actionLoading,
+  performWorkflowAction
+}: {
+  run: WorkflowRun | null;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+}) {
+  return (
+    <section className="business-card queue-card">
+      <div className="a2ui-card-title">
+        <GitBranch size={20} />
+        <h2>Long-running queue</h2>
+      </div>
+      <div className="queue-list">
+        <article className="queue-item ready">
+          <span>{run?.status ?? "pending"}</span>
+          <strong>{run?.id ?? "Creating workflow run"}</strong>
+        </article>
+        <article className="queue-item">
+          <span>capability</span>
+          <strong>{run?.capabilityId.replaceAll("_", " ") ?? "Resolving capability"}</strong>
+        </article>
+      </div>
+      <button type="button" onClick={() => void performWorkflowAction("advance")} disabled={actionLoading || !run}>
+        {actionLoading ? <Loader2 className="spin" size={16} /> : <Play size={16} />}
+        <span>{actionLoading ? "Starting task" : "Start queued task"}</span>
+      </button>
+    </section>
+  );
+}
+
+function HumanApprovalPanel({
+  title,
+  body,
+  workflowRun,
+  actionLoading,
+  performWorkflowAction
+}: {
+  title: string;
+  body: string;
+  workflowRun: WorkflowRun | null;
+  actionLoading: boolean;
+  performWorkflowAction: PerformWorkflowAction;
+}) {
+  const approved = workflowRun?.status === "completed";
+  return (
+    <section className={`business-card approval-card ${approved ? "approved" : "requested"}`}>
+      <div className="a2ui-card-title">
+        <LockKeyhole size={20} />
+        <h2>{title}</h2>
+      </div>
+      <p>{body}</p>
+      <div className="decision-banner">Run status: {workflowRun?.status.replaceAll("_", " ") ?? "pending"}</div>
+      <div className="approval-actions">
+        <button type="button" onClick={() => void performWorkflowAction("approve")} disabled={actionLoading || approved || !workflowRun}>
+          {actionLoading ? <Loader2 className="spin" size={16} /> : <CheckCircle2 size={16} />}
+          <span>{approved ? "Approved in backend" : "Approve and complete"}</span>
+        </button>
+      </div>
+    </section>
   );
 }
 

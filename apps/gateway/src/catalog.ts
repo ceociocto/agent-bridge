@@ -15,6 +15,7 @@ export const capabilities: CapabilityDefinition[] = [
     inputSchema: {
       customerId: "string",
       plannedIsaSubscription: "number optional",
+      microWorkflowId: "enum optional: isa_subscription_feasibility",
       isaWorkflowId:
         "enum optional: isa_allowance_remaining | isa_subscription_feasibility | isa_cash_drag_review | isa_full_review"
     },
@@ -187,7 +188,8 @@ export const capabilities: CapabilityDefinition[] = [
     inputSchema: {
       customerId: "string",
       desiredContributionRate: "number optional",
-      targetRetirementAge: "number optional"
+      targetRetirementAge: "number optional",
+      microWorkflowId: "enum optional: retirement_goal_gap_projection"
     },
     outputSchema: {
       summary: "string",
@@ -271,7 +273,8 @@ export const capabilities: CapabilityDefinition[] = [
     inputSchema: {
       customerId: "string",
       adviserFirmId: "string optional",
-      riskProfile: "string optional"
+      riskProfile: "string optional",
+      microWorkflowId: "enum optional: adviser_review_pack_generation"
     },
     outputSchema: {
       summary: "string",

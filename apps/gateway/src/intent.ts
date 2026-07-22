@@ -36,6 +36,32 @@ const ruleMatches: RuleMatch[] = [
 ];
 
 const broadFinancialTerms = ["pension", "retirement", "invest", "fund", "portfolio", "client", "money"];
+const maxIntentSpans = Number(process.env.INTENT_SPAN_MAX ?? 8);
+const minSpanLength = 12;
+
+const knownOutOfDomainIntents = [
+  {
+    intent: "general weather information",
+    pattern: /(?:天气|气温|温度|下雨|降雨|天气预报|weather|temperature|forecast)/iu,
+    reasoning:
+      "Recognized this as a general weather request. Weather is outside the published Fidelity UK capability catalog, so no customer or financial APIs were invoked."
+  },
+  {
+    intent: "travel booking",
+    pattern: /(?:航班|机票|酒店|旅行|flight|hotel|travel booking)/iu,
+    reasoning:
+      "Recognized this as a travel request. Travel booking is outside the published Fidelity UK capability catalog, so no customer or financial APIs were invoked."
+  }
+] as const;
+
+type SpanRoute = {
+  span: string;
+  capabilityId: CapabilityId;
+  intent: string;
+  score: number;
+  margin: number;
+  matchedTerms: string[];
+};
 
 function withTrace(resolution: IntentResolution, routingTrace: IntentRoutingStep[]): IntentResolution {
   return {
@@ -76,6 +102,111 @@ function scoreRules(prompt: string) {
     .sort((a, b) => b.score - a.score);
 }
 
+function normalizePromptForRouting(prompt: string) {
+  return prompt
+    .replace(/[£$€]\s?\d+(?:,\d{3})*(?:\.\d+)?/g, " amount ")
+    .replace(/\b\d+(?:,\d{3})*(?:\.\d+)?\s?(?:%|percent)\b/gi, " percentage ")
+    .replace(/\b\d{4,}\b/g, " number ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function splitPromptIntoIntentSpans(prompt: string) {
+  const normalized = normalizePromptForRouting(prompt);
+  const spans = normalized
+    .split(
+      /(?:\n+|[.;!?]+|\s+-\s+|\s+also\s+|\s+separately\s+|\s+at the same time\s+|\s+as well as\s+|\s+plus\s+)/i
+    )
+    .map((span) => span.trim())
+    .filter((span) => span.length >= minSpanLength)
+    .slice(0, maxIntentSpans);
+
+  if (spans.length <= 1 && normalized.length >= 220) {
+    return normalized
+      .split(/,\s+(?=(?:check|review|show|assess|compare|prepare|create|help|can|should|is|am)\b)/i)
+      .map((span) => span.trim())
+      .filter((span) => span.length >= minSpanLength)
+      .slice(0, maxIntentSpans);
+  }
+
+  return spans.length ? spans : [normalized];
+}
+
+function buildPreprocessorTrace(prompt: string, spans: string[]): IntentRoutingStep {
+  return {
+    layer: "prompt_preprocessor",
+    status: "passed",
+    detail: `Normalized ${prompt.length} input characters into ${spans.length} routing span${
+      spans.length === 1 ? "" : "s"
+    }.`
+  };
+}
+
+function detectMultiIntent(spans: string[]): { resolution: IntentResolution; trace: IntentRoutingStep } | null {
+  if (spans.length < 2 || !isSemanticRouterEnabled()) return null;
+
+  const thresholds = getSemanticThresholds();
+  const confidentRoutes = spans
+    .map((span): SpanRoute | null => {
+      const semantic = routeIntentSemantically(span);
+      const top = semantic.top;
+      if (!top || semantic.topScore < thresholds.resolve || semantic.margin < Math.max(0.02, thresholds.margin * 0.6)) {
+        return null;
+      }
+
+      return {
+        span,
+        capabilityId: top.capabilityId,
+        intent: top.intent,
+        score: semantic.topScore,
+        margin: semantic.margin,
+        matchedTerms: top.matchedTerms
+      };
+    })
+    .filter((route): route is SpanRoute => Boolean(route));
+
+  const distinctCapabilityIds = [...new Set(confidentRoutes.map((route) => route.capabilityId))];
+  if (distinctCapabilityIds.length < 2) return null;
+
+  const topRoutesByCapability = distinctCapabilityIds
+    .map((capabilityId) =>
+      confidentRoutes
+        .filter((route) => route.capabilityId === capabilityId)
+        .sort((left, right) => right.score - left.score)[0]
+    )
+    .sort((left, right) => right.score - left.score);
+
+  const available = topRoutesByCapability.map((route) => route.capabilityId);
+  return {
+    resolution: {
+      status: "needs_clarification",
+      intent: "multi-intent financial services request",
+      confidence: Number(topRoutesByCapability[0].score.toFixed(3)),
+      reasoning:
+        "The request contains multiple capability-level intents; the gateway will not auto-compose regulated workflows without confirmation.",
+      resolver: "semantic",
+      questions: [
+        `Which request should I handle first: ${topRoutesByCapability
+          .map((route) => route.intent)
+          .slice(0, 3)
+          .join(", ")}?`
+      ],
+      availableCapabilities: available
+    },
+    trace: {
+      layer: "multi_intent_aggregator",
+      status: "needs_clarification",
+      detail: `Detected ${distinctCapabilityIds.length} distinct capability intents across ${spans.length} routing spans.`,
+      confidence: Number(topRoutesByCapability[0].score.toFixed(3)),
+      candidates: topRoutesByCapability.map((route) => ({
+        capabilityId: route.capabilityId,
+        score: Number(route.score.toFixed(3)),
+        matchedTerms: [route.span.slice(0, 80), ...route.matchedTerms].slice(0, 8)
+      }))
+    }
+  };
+}
+
 function resolveRulesGuard(prompt: string): IntentResolution | null {
   const lower = prompt.toLowerCase();
   const scored = scoreRules(prompt);
@@ -109,6 +240,20 @@ function resolveRulesGuard(prompt: string): IntentResolution | null {
   }
 
   return null;
+}
+
+function resolveKnownOutOfDomainIntent(prompt: string): IntentResolution | null {
+  const match = knownOutOfDomainIntents.find((candidate) => candidate.pattern.test(prompt));
+  if (!match) return null;
+
+  return {
+    status: "unsupported",
+    intent: match.intent,
+    confidence: 0.99,
+    reasoning: match.reasoning,
+    resolver: "rules",
+    availableCapabilities
+  };
 }
 
 function buildRuleTrace(prompt: string): IntentRoutingStep {
@@ -183,7 +328,24 @@ export async function resolveIntent(prompt: string, options: { useLlm?: boolean 
       : piiDecision.reasoning
   });
 
-  const ruleGuard = resolveRulesGuard(prompt);
+  const routingPrompt = normalizePromptForRouting(prompt);
+  const intentSpans = splitPromptIntoIntentSpans(prompt);
+  routingTrace.push(buildPreprocessorTrace(prompt, intentSpans));
+
+  const outOfDomain = resolveKnownOutOfDomainIntent(routingPrompt);
+  if (outOfDomain) {
+    return withTrace(outOfDomain, [
+      ...routingTrace,
+      {
+        layer: "rules_guard",
+        status: "unsupported",
+        detail: outOfDomain.reasoning,
+        confidence: outOfDomain.confidence
+      }
+    ]);
+  }
+
+  const ruleGuard = resolveRulesGuard(routingPrompt);
   if (ruleGuard) {
     return withTrace(ruleGuard, [
       ...routingTrace,
@@ -195,12 +357,24 @@ export async function resolveIntent(prompt: string, options: { useLlm?: boolean 
       }
     ]);
   }
-  routingTrace.push(buildRuleTrace(prompt));
+  routingTrace.push(buildRuleTrace(routingPrompt));
+
+  const multiIntent = detectMultiIntent(intentSpans);
+  if (multiIntent) {
+    return withTrace(multiIntent.resolution, [...routingTrace, multiIntent.trace]);
+  }
+  if (intentSpans.length > 1 && isSemanticRouterEnabled()) {
+    routingTrace.push({
+      layer: "multi_intent_aggregator",
+      status: "passed",
+      detail: `Checked ${intentSpans.length} routing spans; no distinct high-confidence capability split was found.`
+    });
+  }
 
   if (!isSemanticRouterEnabled()) {
     routingTrace.push(semanticTrace());
   } else {
-    const semantic = routeIntentSemantically(prompt);
+    const semantic = routeIntentSemantically(routingPrompt);
     const thresholds = getSemanticThresholds();
     const semanticStep: IntentRoutingStep = {
       layer: "semantic_router",

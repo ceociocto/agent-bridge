@@ -1,7 +1,12 @@
 import { loadLocalEnv } from "./env.js";
 import cors from "cors";
 import express from "express";
-import { capabilityInvokeSchema } from "@agent-bridge/shared";
+import {
+  capabilityInvokeSchema,
+  microWorkflowIds,
+  workflowActionSchema,
+  type MicroWorkflowId
+} from "@agent-bridge/shared";
 import { getAuditEvents, getAuditRecord, getAuditRecordByRequestId } from "./audit.js";
 import { capabilities, getCapability } from "./catalog.js";
 import {
@@ -13,6 +18,12 @@ import {
 import { resolveIntent } from "./intent.js";
 import { isLlmIntentResolverConfigured } from "./llmIntentResolver.js";
 import { getMcpSession, listMcpSessions, recordMcpStep } from "./mcpSessions.js";
+import {
+  applyWorkflowAction,
+  createWorkflowRun,
+  getWorkflowRun,
+  updateWorkflowRunResult
+} from "./workflowRuns.js";
 
 loadLocalEnv();
 
@@ -33,6 +44,8 @@ app.get("/", (_req, res) => {
       resolveIntent: "POST /intent/resolve",
       agentRequest: "POST /agent/request",
       aguiRuns: "POST /agui/runs",
+      workflowRuns: "GET /workflow-runs/:runId",
+      workflowActions: "POST /workflow-runs/:runId/actions",
       invokeCapability: "POST /capabilities/:capabilityId/invoke",
       audit: "/audit/:traceId"
       ,
@@ -331,11 +344,21 @@ app.post("/agui/runs", async (req, res, next) => {
     }
 
     const result = await composeCapability(capability, parsed.data);
+    const microWorkflowId = resolveMicroWorkflowId(req.body ?? {}, result);
+    const workflowRun = microWorkflowId
+      ? createWorkflowRun({
+          microWorkflowId,
+          capabilityId: capability.id,
+          input: parsed.data,
+          result
+        })
+      : undefined;
     const response = {
       prompt,
       resolution,
       capability,
-      result
+      result,
+      workflowRun
     };
 
     writeAguiEvent(res, {
@@ -358,7 +381,9 @@ app.post("/agui/runs", async (req, res, next) => {
       runId,
       state: {
         presentationHint: capability.id,
-        outputKeys: Object.keys(result)
+        outputKeys: Object.keys(result),
+        workflowRunId: workflowRun?.id,
+        microWorkflowId: workflowRun?.microWorkflowId
       }
     });
     writeAguiEvent(res, {
@@ -516,8 +541,36 @@ const fieldExtractors: Record<string, FieldExtractor> = {
     body.desiredContributionRate ?? extractPercentage(prompt),
   targetRetirementAge: (body) => body.targetRetirementAge,
   adviserFirmId: (body) => body.adviserFirmId,
-  riskProfile: (body, prompt) => body.riskProfile ?? extractRiskProfile(prompt)
+  riskProfile: (body, prompt) => body.riskProfile ?? extractRiskProfile(prompt),
+  microWorkflowId: (body) => body.microWorkflowId
 };
+
+const workflowCapabilities: Record<MicroWorkflowId, string> = {
+  isa_subscription_feasibility: "personal_investing_isa_allowance_review",
+  adviser_review_pack_generation: "adviser_platform_model_portfolio_review",
+  retirement_goal_gap_projection: "workplace_pension_contribution_guidance"
+};
+
+function resolveMicroWorkflowId(body: Record<string, unknown>, result: Record<string, unknown>) {
+  const capabilityId = typeof result.capability === "string" ? result.capability : undefined;
+  const requested = body.microWorkflowId;
+  if (
+    typeof requested === "string" &&
+    microWorkflowIds.includes(requested as MicroWorkflowId) &&
+    workflowCapabilities[requested as MicroWorkflowId] === capabilityId
+  ) {
+    return requested as MicroWorkflowId;
+  }
+  const resultWorkflowId = result.workflow_id;
+  if (
+    typeof resultWorkflowId === "string" &&
+    microWorkflowIds.includes(resultWorkflowId as MicroWorkflowId) &&
+    workflowCapabilities[resultWorkflowId as MicroWorkflowId] === capabilityId
+  ) {
+    return resultWorkflowId as MicroWorkflowId;
+  }
+  return undefined;
+}
 
 function buildCapabilityInput(
   capability: NonNullable<ReturnType<typeof getCapability>>,
@@ -543,6 +596,43 @@ app.get("/audit/:traceId", (req, res) => {
     return;
   }
   res.json(record);
+});
+
+app.get("/workflow-runs/:runId", (req, res) => {
+  const run = getWorkflowRun(req.params.runId);
+  if (!run) {
+    res.status(404).json({ error: "Workflow run not found" });
+    return;
+  }
+  res.json(run);
+});
+
+app.post("/workflow-runs/:runId/actions", async (req, res, next) => {
+  try {
+    const parsed = workflowActionSchema.safeParse(req.body);
+    if (!parsed.success) {
+      res.status(400).json({ error: "Invalid workflow action", issues: parsed.error.issues });
+      return;
+    }
+    const result = applyWorkflowAction(req.params.runId, parsed.data);
+    if ("error" in result) {
+      res.status(result.status ?? 500).json(result);
+      return;
+    }
+    let run = result.run;
+    if (parsed.data.action === "retry" || parsed.data.payload) {
+      const capability = getCapability(run.capabilityId);
+      if (!capability) {
+        res.status(500).json({ error: "Workflow capability was not found" });
+        return;
+      }
+      const refreshedResult = await composeCapability(capability, run.input);
+      run = updateWorkflowRunResult(run.id, refreshedResult) ?? run;
+    }
+    res.json(run);
+  } catch (error) {
+    next(error);
+  }
 });
 
 app.get("/audit/:traceId/events", (req, res) => {

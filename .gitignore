@@ -5,4 +5,5 @@ dist/
 .env
 .env.local
 apps/demo-web/dist/
+apps/gateway/.data/
 *.log

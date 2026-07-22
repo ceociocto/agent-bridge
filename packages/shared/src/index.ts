@@ -18,6 +18,14 @@ export const isaWorkflowIds = [
 
 export type IsaWorkflowId = (typeof isaWorkflowIds)[number];
 
+export const microWorkflowIds = [
+  "isa_subscription_feasibility",
+  "adviser_review_pack_generation",
+  "retirement_goal_gap_projection"
+] as const;
+
+export type MicroWorkflowId = (typeof microWorkflowIds)[number];
+
 export const capabilityInvokeSchema = z.object({
   customerId: z.string().min(1),
   targetRetirementAge: z.number().int().min(50).max(75).optional(),
@@ -29,7 +37,8 @@ export const capabilityInvokeSchema = z.object({
     .enum(["keep_invested", "take_income_within_five_years", "cash_out", "buy_annuity"])
     .optional(),
   adviserFirmId: z.string().min(1).optional(),
-  riskProfile: z.enum(["cautious", "balanced", "growth", "adventurous"]).optional()
+  riskProfile: z.enum(["cautious", "balanced", "growth", "adventurous"]).optional(),
+  microWorkflowId: z.enum(microWorkflowIds).optional()
 });
 
 export type CapabilityInvokeInput = z.infer<typeof capabilityInvokeSchema>;
@@ -163,7 +172,9 @@ export type IntentResolution = {
 export type IntentRoutingStep = {
   layer:
     | "policy_guard"
+    | "prompt_preprocessor"
     | "rules_guard"
+    | "multi_intent_aggregator"
     | "semantic_router"
     | "llm_adjudicator"
     | "fallback";
@@ -194,6 +205,100 @@ export type AgentReadableResult = {
   next_actions: Array<Record<string, unknown>>;
   [key: string]: unknown;
 };
+
+export type WorkflowStepStatus = "waiting" | "requires_action" | "running" | "completed" | "failed";
+export type WorkflowRunStatus = "active" | "waiting_for_human" | "completed" | "failed";
+export type WorkflowActionType = "advance" | "retry" | "approve";
+export type WorkflowUiHint =
+  | "allowance_donut"
+  | "amount_slider"
+  | "approval_gate"
+  | "durable_queue"
+  | "portfolio_drift"
+  | "retry_checkpoint"
+  | "goal_controls"
+  | "gap_options"
+  | "long_task"
+  | "scenario_comparison";
+
+export type WorkflowRunStep = {
+  id: string;
+  label: string;
+  detail: string;
+  status: WorkflowStepStatus;
+  allowedActions: WorkflowActionType[];
+  uiHint: WorkflowUiHint;
+  attempts: number;
+  updatedAt: string;
+};
+
+export type AgentObservation = {
+  id: string;
+  timestamp: string;
+  kind: "business_result" | "policy_boundary" | "service_exception" | "user_input";
+  summary: string;
+  evidence: Record<string, unknown>;
+};
+
+export type AgentPlanRevision = {
+  id: string;
+  timestamp: string;
+  version: number;
+  reason: string;
+  addedStepIds: string[];
+  removedStepIds: string[];
+};
+
+export type WorkflowAgentState = {
+  objective: string;
+  currentActivity: string;
+  decisionRationale: string;
+  nextAction: string;
+  needsUser: boolean;
+  planVersion: number;
+};
+
+export type WorkflowRunEvent = {
+  id: string;
+  timestamp: string;
+  type:
+    | "run.created"
+    | "observation.recorded"
+    | "plan.revised"
+    | "step.advanced"
+    | "step.retried"
+    | "approval.recorded"
+    | "run.completed";
+  summary: string;
+  stepId: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type WorkflowRun = {
+  id: string;
+  microWorkflowId: MicroWorkflowId;
+  capabilityId: CapabilityId;
+  status: WorkflowRunStatus;
+  currentStepIndex: number;
+  steps: WorkflowRunStep[];
+  input: CapabilityInvokeInput;
+  result: AgentReadableResult;
+  auditTraceId: string;
+  createdAt: string;
+  updatedAt: string;
+  agent: WorkflowAgentState;
+  observations: AgentObservation[];
+  planRevisions: AgentPlanRevision[];
+  events: WorkflowRunEvent[];
+};
+
+export const workflowActionSchema = z.object({
+  action: z.enum(["advance", "retry", "approve"]),
+  stepId: z.string().min(1),
+  payload: z.record(z.string(), z.unknown()).optional()
+});
+
+export type WorkflowActionInput = z.infer<typeof workflowActionSchema>;
 
 export type DemoScenarioComponent =
   | "allowance_chart"

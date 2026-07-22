@@ -1,5 +1,7 @@
 # Demo Steps
 
+For the current customer/adviser Agentic Web walkthrough, including dynamic replanning, durable workflows, and presenter notes, use [AGENTIC_WEB_DEMO_GUIDE.md](./AGENTIC_WEB_DEMO_GUIDE.md).
+
 ## Start
 
 ```bash

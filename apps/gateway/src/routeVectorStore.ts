@@ -6,6 +6,12 @@ export type RouteSearchCandidate = {
   intent: string;
   score: number;
   matchedTerms: string[];
+  scoreComponents: {
+    positiveCosine: number;
+    keywordCoverage: number;
+    domainCoverage: number;
+    negativePenalty: number;
+  };
 };
 
 export type RouteSearchResult = {
@@ -64,6 +70,10 @@ const stopWords = new Set([
   "your"
 ]);
 
+function uniqueTokens(texts: string[]) {
+  return new Set(texts.flatMap((text) => tokenize(text)));
+}
+
 function normalizeToken(token: string) {
   return token
     .toLowerCase()
@@ -108,6 +118,8 @@ export class LocalRouteVectorStore implements RouteVectorStore {
     document: RouteDocument;
     positiveTokens: Set<string>;
     negativeTokens: Set<string>;
+    keywordTokens: Set<string>;
+    domainTokens: Set<string>;
     positiveVector: Map<string, number>;
     negativeVector: Map<string, number>;
   }>;
@@ -120,6 +132,8 @@ export class LocalRouteVectorStore implements RouteVectorStore {
         document,
         positiveTokens: new Set(positiveTokens),
         negativeTokens: new Set(negativeTokens),
+        keywordTokens: uniqueTokens(document.metadata.keywords),
+        domainTokens: uniqueTokens(document.metadata.domains),
         positiveVector: termFrequency(positiveTokens),
         negativeVector: termFrequency(negativeTokens)
       };
@@ -132,17 +146,39 @@ export class LocalRouteVectorStore implements RouteVectorStore {
     const promptTokenSet = new Set(promptTokens);
 
     const candidates = this.entries
-      .map(({ document, positiveTokens, negativeTokens, positiveVector, negativeVector }) => {
+      .map(({ document, positiveTokens, negativeTokens, keywordTokens, domainTokens, positiveVector, negativeVector }) => {
         const matchedTerms = [...promptTokenSet].filter((token) => positiveTokens.has(token)).slice(0, 8);
         const negativeMatchedTerms = [...promptTokenSet].filter((token) => negativeTokens.has(token)).slice(0, 8);
         const positiveScore = cosineSimilarity(promptVector, positiveVector);
         const negativeScore = cosineSimilarity(promptVector, negativeVector);
+        const keywordMatches = [...promptTokenSet].filter((token) => keywordTokens.has(token));
+        const domainMatches = [...promptTokenSet].filter((token) => domainTokens.has(token));
+        const keywordCoverage = keywordTokens.size ? keywordMatches.length / keywordTokens.size : 0;
+        const domainCoverage = domainTokens.size ? domainMatches.length / domainTokens.size : 0;
+        const negativePenalty = negativeScore * 0.35;
+        const score = Math.max(
+          0,
+          positiveScore * 0.55 + Math.min(keywordCoverage, 0.5) * 0.7 + Math.min(domainCoverage, 0.5) * 0.3 - negativePenalty
+        );
 
         return {
           capabilityId: document.capabilityId,
           intent: document.intent,
-          score: Math.max(0, positiveScore - negativeScore * 0.35),
-          matchedTerms: [...matchedTerms, ...negativeMatchedTerms.map((term) => `not:${term}`)].slice(0, 8)
+          score,
+          matchedTerms: [
+            ...new Set([
+              ...matchedTerms,
+              ...keywordMatches.map((term) => `kw:${term}`),
+              ...domainMatches.map((term) => `domain:${term}`),
+              ...negativeMatchedTerms.map((term) => `not:${term}`)
+            ])
+          ].slice(0, 8),
+          scoreComponents: {
+            positiveCosine: positiveScore,
+            keywordCoverage,
+            domainCoverage,
+            negativePenalty
+          }
         };
       })
       .sort((a, b) => b.score - a.score)
