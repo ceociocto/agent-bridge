@@ -618,6 +618,31 @@ const agenticWorkflows: AgenticWorkflow[] = [
 
 const workflowById = new Map(agenticWorkflows.map((workflow) => [workflow.id, workflow]));
 
+function extractRetirementAgeFromPrompt(prompt: string) {
+  const patterns = [
+    /\bretire(?:ment)?\s*(?:at|age)?\s*(\d{2,3})\b/i,
+    /\bage\s*(\d{2,3})\s*(?:retire|retirement)\b/i,
+    /(\d{2,3})\s*岁\s*(?:退休|retire)/i,
+    /(?:退休|retire)\s*(?:到|在|at)?\s*(\d{2,3})\s*岁?/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = prompt.match(pattern);
+    if (!match) continue;
+    const age = Number(match[1]);
+    if (Number.isFinite(age)) return age;
+  }
+
+  return undefined;
+}
+
+function extractContributionRateFromPrompt(prompt: string) {
+  const match = prompt.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|per cent)\b/i);
+  if (!match) return undefined;
+  const rate = Number(match[1]);
+  return Number.isFinite(rate) ? rate : undefined;
+}
+
 function AgenticWebPage() {
   const [activeWorkflowId, setActiveWorkflowId] = useState(() => {
     const saved = window.localStorage.getItem("agentic.activeWorkflowId");
@@ -669,16 +694,18 @@ function AgenticWebPage() {
 
     const desiredContribution = Number(activeWorkflow.input.desiredContributionRate ?? 10);
     const desiredRetirementAge = Number(activeWorkflow.input.targetRetirementAge ?? 65);
+    const promptContribution = extractContributionRateFromPrompt(question);
+    const promptRetirementAge = extractRetirementAgeFromPrompt(question);
     const isRerunOfCurrentWorkflow = workspaceStarted && activeWorkflow.id === renderedWorkflowId;
-    const submittedContribution = isRerunOfCurrentWorkflow ? contributionRate : desiredContribution;
-    const submittedRetirementAge = isRerunOfCurrentWorkflow ? retirementAge : desiredRetirementAge;
+    const submittedContribution = isRerunOfCurrentWorkflow ? contributionRate : (promptContribution ?? desiredContribution);
+    const submittedRetirementAge = isRerunOfCurrentWorkflow ? retirementAge : (promptRetirementAge ?? desiredRetirementAge);
     setRenderedWorkflowId(activeWorkflow.id);
     setWorkspaceStarted(true);
     setWorkflowRun(null);
     if (activeWorkflow.id === "isa-top-up-readiness") setSubscriptionAmount(8000);
     if (activeWorkflow.domain === "Workplace Investing") {
-      setContributionRate(Number.isFinite(desiredContribution) ? desiredContribution : 10);
-      setRetirementAge(Number.isFinite(desiredRetirementAge) ? desiredRetirementAge : 65);
+      setContributionRate(Number.isFinite(submittedContribution) ? submittedContribution : 10);
+      setRetirementAge(Number.isFinite(submittedRetirementAge) ? submittedRetirementAge : 65);
     }
     setLoading(true);
     setError("");
@@ -1403,7 +1430,7 @@ function WorkplaceSimulationWorkspace({
       </label>
       <label className="range-control">
         <span>Retirement age</span>
-        <input type="range" min="60" max="70" step="1" value={retirementAge} onChange={(event) => setRetirementAge(Number(event.target.value))} />
+        <input type="range" min="50" max="75" step="1" value={retirementAge} onChange={(event) => setRetirementAge(Number(event.target.value))} />
         <strong>{retirementAge}</strong>
       </label>
     </section>

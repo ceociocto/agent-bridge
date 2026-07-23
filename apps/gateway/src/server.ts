@@ -9,6 +9,7 @@ import {
 } from "@agent-bridge/shared";
 import { getAuditEvents, getAuditRecord, getAuditRecordByRequestId } from "./audit.js";
 import { capabilities, getCapability } from "./catalog.js";
+import { getCapabilityPackage, type InputContractField, type InputExtractor } from "./capabilityPackages.js";
 import {
   composeAdviserModelPortfolioReview,
   composeIsaAllowanceReview,
@@ -78,7 +79,10 @@ app.get("/capabilities", (_req, res) => {
       routeIndex: "catalog metadata + examples + local semantic vectors + optional LLM adjudication",
       auditModel: "append-only invocation events, currently in-memory for the POC"
     },
-    capabilities
+    capabilities: capabilities.map((capability) => ({
+      ...capability,
+      package: getCapabilityPackage(capability.id)
+    }))
   });
 });
 
@@ -91,6 +95,7 @@ app.get("/capabilities/:capabilityId/contract", (req, res) => {
 
   res.json({
     contract: capability,
+    package: getCapabilityPackage(capability.id),
     enterpriseReadiness: {
       configuredExecution: capability.executionPlan.steps.length,
       policyControls: capability.policy,
@@ -463,11 +468,30 @@ function evaluateCustomerScope(prompt: string, customerId: string) {
 }
 
 function extractPercentage(prompt: string) {
-  const match = prompt.match(/\b(\d{1,2}(?:\.\d+)?)\s*%/);
+  const match = prompt.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|per cent)\b/i);
   if (!match) return undefined;
 
   const rate = Number(match[1]);
   return Number.isFinite(rate) ? rate : undefined;
+}
+
+function extractRetirementAge(prompt: string) {
+  const patterns = [
+    /\bretire(?:ment)?\s*(?:at|age)?\s*(\d{2,3})\b/i,
+    /\bage\s*(\d{2,3})\s*(?:retire|retirement)\b/i,
+    /\b(\d{2,3})\s*(?:year[-\s]?old|years old)\s*(?:retire|retirement)\b/i,
+    /(\d{2,3})\s*岁\s*(?:退休|retire)/i,
+    /(?:退休|retire)\s*(?:到|在|at)?\s*(\d{2,3})\s*岁?/i
+  ];
+
+  for (const pattern of patterns) {
+    const match = prompt.match(pattern);
+    if (!match) continue;
+    const age = Number(match[1]);
+    if (Number.isFinite(age)) return age;
+  }
+
+  return undefined;
 }
 
 function extractMoneyAfter(prompt: string, keywords: string[]) {
@@ -523,26 +547,22 @@ function extractIsaWorkflowId(prompt: string) {
   return undefined;
 }
 
-type FieldExtractor = (body: Record<string, unknown>, prompt: string) => unknown;
+type FieldExtractor = (
+  body: Record<string, unknown>,
+  prompt: string,
+  fieldName: string,
+  extractor: InputExtractor
+) => unknown;
 
-// Only fields declared in the resolved capability's inputSchema are populated.
-// This prevents a money figure intended for one product (e.g. a drawdown income)
-// from being extracted and reinterpreted as a param for a different capability
-// (e.g. plannedIsaSubscription) when the prompt mentions multiple products.
-const fieldExtractors: Record<string, FieldExtractor> = {
-  customerId: (body) => body.customerId,
-  isaWorkflowId: (body, prompt) => body.isaWorkflowId ?? extractIsaWorkflowId(prompt),
-  plannedIsaSubscription: (body, prompt) =>
-    body.plannedIsaSubscription ?? extractMoneyAfter(prompt, ["isa", "subscribe", "add"]),
-  plannedDrawdownIncome: (body, prompt) =>
-    body.plannedDrawdownIncome ?? extractMoneyAfter(prompt, ["drawdown", "income", "take"]),
-  drawdownGoal: (body, prompt) => body.drawdownGoal ?? extractDrawdownGoal(prompt),
-  desiredContributionRate: (body, prompt) =>
-    body.desiredContributionRate ?? extractPercentage(prompt),
-  targetRetirementAge: (body) => body.targetRetirementAge,
-  adviserFirmId: (body) => body.adviserFirmId,
-  riskProfile: (body, prompt) => body.riskProfile ?? extractRiskProfile(prompt),
-  microWorkflowId: (body) => body.microWorkflowId
+const fieldExtractors: Record<InputExtractor["kind"], FieldExtractor> = {
+  body: (body, _prompt, fieldName) => body[fieldName],
+  isa_workflow: (_body, prompt) => extractIsaWorkflowId(prompt),
+  money_after: (_body, prompt, _fieldName, extractor) =>
+    extractor?.kind === "money_after" ? extractMoneyAfter(prompt, extractor.keywords) : undefined,
+  drawdown_goal: (_body, prompt) => extractDrawdownGoal(prompt),
+  percentage: (_body, prompt) => extractPercentage(prompt),
+  retirement_age: (_body, prompt) => extractRetirementAge(prompt),
+  risk_profile: (_body, prompt) => extractRiskProfile(prompt)
 };
 
 const workflowCapabilities: Record<MicroWorkflowId, string> = {
@@ -577,16 +597,76 @@ function buildCapabilityInput(
   body: Record<string, unknown>,
   prompt: string
 ): Record<string, unknown> {
+  const capabilityPackage = getCapabilityPackage(capability.id);
+  if (capabilityPackage) {
+    return buildCapabilityInputFromPackage(capabilityPackage.input, body, prompt);
+  }
+
   const input: Record<string, unknown> = {};
   for (const field of Object.keys(capability.inputSchema)) {
-    const extract = fieldExtractors[field];
-    if (!extract) continue;
-    const value = extract(body, prompt);
+    const value = body[field];
     if (value !== undefined && value !== null && value !== "") {
       input[field] = value;
     }
   }
   return input;
+}
+
+function buildCapabilityInputFromPackage(
+  contract: Record<string, InputContractField>,
+  body: Record<string, unknown>,
+  prompt: string
+) {
+  const input: Record<string, unknown> = {};
+
+  for (const [fieldName, field] of Object.entries(contract)) {
+    const candidates = field.extractors
+      .map((extractor) => {
+        const extract = fieldExtractors[extractor.kind];
+        const value = extract?.(body, prompt, fieldName, extractor);
+        return normalizeExtractedValue(value, field);
+      })
+      .filter((value) => value !== undefined && value !== null && value !== "");
+
+    const value = chooseInputValue(candidates, field);
+    if (value !== undefined && value !== null && value !== "") {
+      input[fieldName] = value;
+    }
+  }
+
+  return input;
+}
+
+function chooseInputValue(candidates: unknown[], field: InputContractField) {
+  if (candidates.length === 0) return undefined;
+  if (candidates.length === 1) return candidates[0];
+
+  const [bodyValue, promptValue] = candidates;
+  if (
+    promptValue !== undefined &&
+    field.defaultValue !== undefined &&
+    bodyValue === field.defaultValue &&
+    promptValue !== bodyValue
+  ) {
+    return promptValue;
+  }
+
+  return field.sourcePriority?.[0] === "prompt" ? promptValue : bodyValue;
+}
+
+function normalizeExtractedValue(value: unknown, field: InputContractField) {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "string" && ["number", "integer", "percentage"].includes(field.type)) {
+    const parsed = Number(value.replaceAll(",", ""));
+    return Number.isFinite(parsed) ? normalizeNumericValue(parsed, field) : value;
+  }
+  if (typeof value === "number") return normalizeNumericValue(value, field);
+  return value;
+}
+
+function normalizeNumericValue(value: number, field: InputContractField) {
+  if (!Number.isFinite(value)) return undefined;
+  return field.type === "integer" ? Math.trunc(value) : value;
 }
 
 app.get("/audit/:traceId", (req, res) => {
