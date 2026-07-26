@@ -168,7 +168,7 @@ export type IntentResolution = {
   capabilityId?: CapabilityId;
   confidence: number;
   reasoning: string;
-  resolver?: "llm" | "rules" | "semantic" | "fallback";
+  resolver?: "llm" | "rules" | "semantic" | "hybrid" | "intent_frame" | "fallback";
   questions?: string[];
   availableCapabilities?: CapabilityId[];
   policyDecision?: AuditStep;
@@ -179,8 +179,11 @@ export type IntentRoutingStep = {
   layer:
     | "policy_guard"
     | "prompt_preprocessor"
+    | "intent_frame"
+    | "intent_frame_guard"
     | "rules_guard"
     | "multi_intent_aggregator"
+    | "hybrid_retriever"
     | "semantic_router"
     | "llm_adjudicator"
     | "fallback";

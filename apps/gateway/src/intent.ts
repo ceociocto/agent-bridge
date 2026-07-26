@@ -1,10 +1,49 @@
 import { capabilityIds, type CapabilityId, type IntentResolution, type IntentRoutingStep } from "@agent-bridge/shared";
+import { z } from "zod";
 import { resolveIntentWithLlm } from "./llmIntentResolver.js";
 import { createPiiGuardProvider } from "./piiGuard.js";
+import { buildRouteDocuments } from "./routeCatalog.js";
+import { LocalBm25RouteStore } from "./routeBm25Store.js";
 import { getSemanticThresholds, routeIntentSemantically } from "./semanticIntentRouter.js";
 
 const availableCapabilities = [...capabilityIds];
 const piiGuardProvider = createPiiGuardProvider();
+const bm25RouteStore = new LocalBm25RouteStore(buildRouteDocuments());
+
+const IntentFrameSchema = z.object({
+  domain: z.enum(["housing_fund", "pension", "isa", "sipp", "workplace_pension", "adviser", "unknown"]),
+  goal: z.enum([
+    "withdraw_funds",
+    "check_eligibility",
+    "retirement_planning",
+    "account_composition",
+    "contribution_guidance",
+    "adviser_review",
+    "isa_review",
+    "drawdown_review",
+    "cancel_or_decline",
+    "general_question",
+    "unknown"
+  ]),
+  polarity: z.enum(["positive", "negative", "uncertain"]),
+  actionability: z.enum(["transaction_intent", "exploration", "question", "none"]),
+  confidence: z.number().min(0).max(1)
+});
+
+type IntentFrame = z.infer<typeof IntentFrameSchema>;
+
+const RoutingDecisionSchema = z.object({
+  status: z.enum(["resolved", "needs_clarification", "unsupported", "denied"]),
+  intent: z.string(),
+  capabilityId: z.enum(capabilityIds).optional(),
+  confidence: z.number().min(0).max(1),
+  reasoning: z.string(),
+  resolver: z.enum(["llm", "rules", "semantic", "hybrid", "intent_frame", "fallback"])
+}).superRefine((decision, ctx) => {
+  if (decision.status === "resolved" && !decision.capabilityId) {
+    ctx.addIssue({ code: "custom", message: "resolved routing decisions require a capabilityId" });
+  }
+});
 
 type RuleMatch = {
   capabilityId: CapabilityId;
@@ -123,6 +162,67 @@ function hasNegationCancellation(prompt: string) {
   return /(?:不是|并非)\s*(?:不要|不想|不用|别|无需|暂不|先不|取消)/iu.test(prompt);
 }
 
+function hasBroadFinancialSignal(prompt: string) {
+  const lower = prompt.toLowerCase();
+  return broadFinancialTerms.some((word) => lower.includes(word));
+}
+
+function extractIntentFrame(prompt: string): IntentFrame {
+  const lower = prompt.toLowerCase();
+  const negative = hasPensionAccessNegation(prompt) && !hasNegationCancellation(prompt);
+  const domain = /(?:公积金|住房公积金)/iu.test(prompt)
+    ? "housing_fund"
+    : /(?:养老金|退休|领取养老金)/iu.test(prompt)
+      ? "pension"
+      : /\bisa\b|stocks and shares/i.test(prompt)
+        ? "isa"
+        : /\bsipp\b|drawdown|mpaa/i.test(prompt)
+          ? "sipp"
+          : /workplace|employer match|salary sacrifice|contribution rate/i.test(prompt)
+            ? "workplace_pension"
+            : /adviser|advisor|model portfolio|suitability|review pack/i.test(prompt)
+              ? "adviser"
+              : "unknown";
+
+  const goal = negative
+    ? "cancel_or_decline"
+    : hasPensionAccessAction(prompt) && (domain === "housing_fund" || domain === "pension")
+      ? "withdraw_funds"
+      : /(?:什么时候退休|怎样领取|准备退休|retirement planning)/iu.test(prompt)
+        ? "retirement_planning"
+        : /(?:比例|组成|构成|分布|配置|composition|allocation)/iu.test(prompt)
+          ? "account_composition"
+          : /\bisa\b|allowance|cash drag/i.test(prompt)
+            ? "isa_review"
+            : /\bsipp\b|drawdown|mpaa/i.test(prompt)
+              ? "drawdown_review"
+              : /workplace|employer match|salary sacrifice|contribution/i.test(prompt)
+                ? "contribution_guidance"
+                : /adviser|advisor|model portfolio|suitability|review pack/i.test(prompt)
+                  ? "adviser_review"
+                  : domain !== "unknown"
+                    ? "general_question"
+                    : "unknown";
+
+  const actionability = negative
+    ? "none"
+    : goal === "unknown"
+      ? "none"
+      : /(?:能不能|看看|了解|检查|review|check|can i|should i)/iu.test(lower)
+        ? "exploration"
+        : goal === "general_question"
+          ? "question"
+          : "transaction_intent";
+
+  return IntentFrameSchema.parse({
+    domain,
+    goal,
+    polarity: negative ? "negative" : domain === "unknown" && goal === "unknown" ? "uncertain" : "positive",
+    actionability,
+    confidence: domain === "unknown" && goal === "unknown" ? 0.2 : negative ? 0.9 : 0.72
+  });
+}
+
 function resolvePensionNoActionGuard(prompt: string): IntentResolution | null {
   if (!hasPensionFundTerm(prompt) || !hasPensionAccessNegation(prompt) || hasNegationCancellation(prompt)) {
     return null;
@@ -152,6 +252,166 @@ function resolvePensionAmbiguityGuard(prompt: string): IntentResolution | null {
     resolver: "rules",
     questions: ["你是想提取公积金、查看账户构成，还是咨询退休/领取方案？"],
     availableCapabilities
+  };
+}
+
+function frameTrace(frame: IntentFrame): IntentRoutingStep {
+  return {
+    layer: "intent_frame",
+    status: "passed",
+    detail: `Extracted domain=${frame.domain}, goal=${frame.goal}, polarity=${frame.polarity}, actionability=${frame.actionability}.`,
+    confidence: frame.confidence
+  };
+}
+
+function resolveFrameGuard(prompt: string, frame: IntentFrame): IntentResolution | null {
+  if (frame.polarity === "negative" || frame.actionability === "none" && frame.goal === "cancel_or_decline") {
+    return {
+      status: "unsupported",
+      intent: "no actionable financial services request",
+      confidence: frame.confidence,
+      reasoning:
+        "The latest request is explicitly negative or a cancellation, so the gateway did not start a business workflow.",
+      resolver: "intent_frame",
+      availableCapabilities
+    };
+  }
+
+  if (frame.domain === "unknown" && frame.actionability === "none" && frame.goal === "unknown") {
+    if (hasBroadFinancialSignal(prompt)) {
+      return {
+        status: "needs_clarification",
+        intent: "ambiguous financial services request",
+        confidence: Math.max(0.42, frame.confidence),
+        reasoning: "The latest request is broadly financial but does not clearly identify one published capability.",
+        resolver: "intent_frame",
+        questions: [
+          "Is this about ISA investing, SIPP drawdown, workplace pension contributions, or an adviser portfolio review?"
+        ],
+        availableCapabilities
+      };
+    }
+
+    return {
+      status: "unsupported",
+      intent: "unclassified request",
+      confidence: frame.confidence,
+      reasoning:
+        "The latest request does not contain enough domain or action evidence to select a governed financial capability.",
+      resolver: "intent_frame",
+      availableCapabilities
+    };
+  }
+
+  if ((frame.domain === "housing_fund" || frame.domain === "pension") && frame.goal === "general_question") {
+    return {
+      status: "needs_clarification",
+      intent: "ambiguous pension or housing fund request",
+      confidence: frame.confidence,
+      reasoning:
+        "The latest request mentions pension/housing funds but does not state whether the user wants withdrawal, account composition, or retirement planning.",
+      resolver: "intent_frame",
+      questions: ["你是想提取公积金、查看账户构成，还是咨询退休/领取方案？"],
+      availableCapabilities
+    };
+  }
+
+  return null;
+}
+
+function goalCapabilityBoost(frame: IntentFrame, capabilityId: CapabilityId) {
+  if (capabilityId === "retirement_pension_task_orchestration") {
+    return ["housing_fund", "pension"].includes(frame.domain) ? 0.18 : 0;
+  }
+  if (capabilityId === "personal_investing_isa_allowance_review") return frame.domain === "isa" ? 0.16 : 0;
+  if (capabilityId === "sipp_drawdown_pathway_review") return frame.domain === "sipp" ? 0.16 : 0;
+  if (capabilityId === "workplace_pension_contribution_guidance") return frame.domain === "workplace_pension" ? 0.16 : 0;
+  if (capabilityId === "adviser_platform_model_portfolio_review") return frame.domain === "adviser" ? 0.16 : 0;
+  return 0;
+}
+
+function resolveHybridRoute(prompt: string, frame: IntentFrame): { resolution: IntentResolution; trace: IntentRoutingStep } | null {
+  const topK = getSemanticThresholds().topK;
+  const bm25 = bm25RouteStore.search(prompt, { topK });
+  const semantic = isSemanticRouterEnabled() ? routeIntentSemantically(prompt) : undefined;
+  const semanticByCapability = new Map(semantic?.candidates.map((candidate) => [candidate.capabilityId, candidate]) ?? []);
+  const bm25Max = Math.max(1, ...bm25.candidates.map((candidate) => candidate.score));
+  const candidateIds = [
+    ...new Set([
+      ...bm25.candidates.map((candidate) => candidate.capabilityId),
+      ...(semantic?.candidates.map((candidate) => candidate.capabilityId) ?? [])
+    ])
+  ];
+  const ranked = candidateIds
+    .map((capabilityId) => {
+      const bm25Candidate = bm25.candidates.find((candidate) => candidate.capabilityId === capabilityId);
+      const semanticCandidate = semanticByCapability.get(capabilityId);
+      const bm25Score = (bm25Candidate?.score ?? 0) / bm25Max;
+      const semanticScore = semanticCandidate?.score ?? 0;
+      const boost = goalCapabilityBoost(frame, capabilityId);
+      return {
+        capabilityId,
+        intent: bm25Candidate?.intent ?? semanticCandidate?.intent ?? capabilityId,
+        score: bm25Score * 0.46 + semanticScore * 0.36 + boost,
+        matchedTerms: [...new Set([...(bm25Candidate?.matchedTerms ?? []), ...(semanticCandidate?.matchedTerms ?? [])])].slice(0, 8),
+        bm25Score,
+        semanticScore,
+        boost
+      };
+    })
+    .sort((left, right) => right.score - left.score);
+
+  const top = ranked[0];
+  const runnerUp = ranked[1];
+  const margin = (top?.score ?? 0) - (runnerUp?.score ?? 0);
+  const trace: IntentRoutingStep = {
+    layer: "hybrid_retriever",
+    status: "passed",
+    detail: `Combined BM25 and semantic candidates; top score ${(top?.score ?? 0).toFixed(2)}, margin ${margin.toFixed(2)}.`,
+    capabilityId: top?.capabilityId,
+    confidence: top?.score,
+    candidates: ranked.slice(0, topK).map((candidate) => ({
+      capabilityId: candidate.capabilityId,
+      score: Number(candidate.score.toFixed(3)),
+      matchedTerms: [
+        ...candidate.matchedTerms,
+        `bm25:${candidate.bm25Score.toFixed(2)}`,
+        `semantic:${candidate.semanticScore.toFixed(2)}`,
+        `frame:${candidate.boost.toFixed(2)}`
+      ]
+    }))
+  };
+
+  if (!top || top.score < 0.22) return { resolution: resolveIntentWithConservativeFallback([]), trace: { ...trace, status: "unsupported" } };
+  if (runnerUp && margin < 0.04 && top.score < 0.55) {
+    const decision = RoutingDecisionSchema.parse({
+      status: "needs_clarification",
+      intent: "ambiguous financial services request",
+      confidence: Number(top.score.toFixed(3)),
+      reasoning: "Hybrid retrieval found close capability candidates and requires user confirmation before invoking a workflow.",
+      resolver: "hybrid"
+    });
+    return {
+      resolution: {
+        ...decision,
+        questions: [`Which request should I handle first: ${top.intent} or ${runnerUp.intent}?`],
+        availableCapabilities: ranked.slice(0, 3).map((candidate) => candidate.capabilityId)
+      },
+      trace: { ...trace, status: "needs_clarification" }
+    };
+  }
+
+  const decision = RoutingDecisionSchema.parse({
+    status: "resolved",
+    intent: top.intent,
+    capabilityId: top.capabilityId,
+    confidence: Math.min(0.96, Number(top.score.toFixed(3))),
+    reasoning: "Hybrid retriever selected a capability using IntentFrame context plus BM25 and semantic evidence.",
+    resolver: "hybrid"
+  });
+  return {
+    resolution: decision,
+    trace: { ...trace, status: "resolved" }
   };
 }
 
@@ -301,18 +561,7 @@ function resolveRulesGuard(prompt: string): IntentResolution | null {
     };
   }
 
-  if (top?.score && top.score >= 2) {
-    return {
-      status: "resolved",
-      intent: top.intent,
-      capabilityId: top.capabilityId,
-      confidence: Math.min(0.96, 0.72 + top.score * 0.04),
-      reasoning: `Deterministic rules matched ${top.score} capability-specific terms for ${top.intent}.`,
-      resolver: "rules"
-    };
-  }
-
-  if (!top?.score && broadFinancialTerms.some((word) => lower.includes(word))) {
+  if (!top?.score && hasBroadFinancialSignal(prompt)) {
     return {
       status: "needs_clarification",
       intent: "ambiguous financial services request",
@@ -432,6 +681,21 @@ export async function resolveIntent(prompt: string, options: { useLlm?: boolean 
     ]);
   }
 
+  const intentFrame = extractIntentFrame(routingPrompt);
+  routingTrace.push(frameTrace(intentFrame));
+  const frameGuard = resolveFrameGuard(routingPrompt, intentFrame);
+  if (frameGuard) {
+    return withTrace(frameGuard, [
+      ...routingTrace,
+      {
+        layer: "intent_frame_guard",
+        status: frameGuard.status,
+        detail: frameGuard.reasoning,
+        confidence: frameGuard.confidence
+      }
+    ]);
+  }
+
   const pensionNoAction = resolvePensionNoActionGuard(routingPrompt);
   if (pensionNoAction) {
     return withTrace(pensionNoAction, [
@@ -482,6 +746,14 @@ export async function resolveIntent(prompt: string, options: { useLlm?: boolean 
       status: "passed",
       detail: `Checked ${intentSpans.length} routing spans; no distinct high-confidence capability split was found.`
     });
+  }
+
+  const hybridRoute = resolveHybridRoute(routingPrompt, intentFrame);
+  if (hybridRoute) {
+    if (hybridRoute.resolution.status === "unsupported") {
+      return resolveIntentWithConservativeFallback([...routingTrace, hybridRoute.trace]);
+    }
+    return withTrace(hybridRoute.resolution, [...routingTrace, hybridRoute.trace]);
   }
 
   if (!isSemanticRouterEnabled()) {
