@@ -618,6 +618,388 @@ const agenticWorkflows: AgenticWorkflow[] = [
 
 const workflowById = new Map(agenticWorkflows.map((workflow) => [workflow.id, workflow]));
 
+type AgenticUiStageId =
+  | "LoadMemberProfile"
+  | "LoadPensionAccounts"
+  | "ReviewPensionComposition"
+  | "CheckWithdrawalEligibility"
+  | "EstimateWithdrawalImpact"
+  | "CompareWithdrawalRoutes"
+  | "StartControlledApplication";
+
+type AgenticUiStageDefinition = {
+  id: AgenticUiStageId;
+  title: string;
+  brief: string;
+  requires: AgenticUiStageId[];
+  capability: string;
+  component: string;
+};
+
+type AgenticUiScenario = {
+  id: "withdraw-access" | "pot-composition";
+  label: string;
+  prompt: string;
+  intent: string;
+  goal: string;
+  confidence: number;
+  targetStages: AgenticUiStageId[];
+  primaryMetric: string;
+  secondaryMetric: string;
+};
+
+const agenticUiStageLibrary: Record<AgenticUiStageId, AgenticUiStageDefinition> = {
+  LoadMemberProfile: {
+    id: "LoadMemberProfile",
+    title: "Load member profile",
+    brief: "Member age band, employment status, scheme membership.",
+    requires: [],
+    capability: "Member profile",
+    component: "Profile summary"
+  },
+  LoadPensionAccounts: {
+    id: "LoadPensionAccounts",
+    title: "Load pension accounts",
+    brief: "Current workplace pension, SIPP and available cash data.",
+    requires: ["LoadMemberProfile"],
+    capability: "Pension accounts",
+    component: "Account summary"
+  },
+  ReviewPensionComposition: {
+    id: "ReviewPensionComposition",
+    title: "Review pension composition",
+    brief: "Break down pot sources before any withdrawal decision.",
+    requires: ["LoadPensionAccounts"],
+    capability: "Pot composition",
+    component: "Composition chart"
+  },
+  CheckWithdrawalEligibility: {
+    id: "CheckWithdrawalEligibility",
+    title: "Check withdrawal eligibility",
+    brief: "Determine possible access routes and missing evidence.",
+    requires: ["LoadPensionAccounts"],
+    capability: "Withdrawal eligibility",
+    component: "Eligibility result"
+  },
+  EstimateWithdrawalImpact: {
+    id: "EstimateWithdrawalImpact",
+    title: "Estimate withdrawal impact",
+    brief: "Show likely tax band, pot reduction and future income effect.",
+    requires: ["CheckWithdrawalEligibility", "ReviewPensionComposition"],
+    capability: "Impact simulation",
+    component: "Impact preview"
+  },
+  CompareWithdrawalRoutes: {
+    id: "CompareWithdrawalRoutes",
+    title: "Compare withdrawal routes",
+    brief: "Compare lower-impact access options before application.",
+    requires: ["EstimateWithdrawalImpact"],
+    capability: "Route comparison",
+    component: "Route choices"
+  },
+  StartControlledApplication: {
+    id: "StartControlledApplication",
+    title: "Start controlled application",
+    brief: "Open a governed application with disclosures and identity checks.",
+    requires: ["CompareWithdrawalRoutes"],
+    capability: "Application workflow",
+    component: "Application gate"
+  }
+};
+
+const agenticUiScenarios: AgenticUiScenario[] = [
+  {
+    id: "withdraw-access",
+    label: "Can I take money out?",
+    prompt: "I’m short of money. Can I take some money from my pension?",
+    intent: "access_pension_funds",
+    goal: "Explore whether pension funds can be accessed without starting an application.",
+    confidence: 0.91,
+    targetStages: ["CheckWithdrawalEligibility", "EstimateWithdrawalImpact", "CompareWithdrawalRoutes"],
+    primaryMetric: "Eligibility exploration",
+    secondaryMetric: "No transaction started"
+  },
+  {
+    id: "pot-composition",
+    label: "What is my pot made of?",
+    prompt: "Before I withdraw, how is my pension pot split across different components?",
+    intent: "understand_pension_pot_composition",
+    goal: "Explain pension pot composition before deciding whether withdrawal is sensible.",
+    confidence: 0.87,
+    targetStages: ["ReviewPensionComposition"],
+    primaryMetric: "Composition analysis",
+    secondaryMetric: "Read-only task"
+  }
+];
+
+function buildAgenticUiTaskPlan(scenario: AgenticUiScenario) {
+  const explicitStages = new Set<AgenticUiStageId>(scenario.targetStages);
+  const included = new Set<AgenticUiStageId>();
+  const ordered: AgenticUiStageId[] = [];
+
+  function includeStage(stageId: AgenticUiStageId) {
+    if (included.has(stageId)) return;
+    const stage = agenticUiStageLibrary[stageId];
+    stage.requires.forEach(includeStage);
+    included.add(stageId);
+    ordered.push(stageId);
+  }
+
+  scenario.targetStages.forEach(includeStage);
+
+  return ordered.map((stageId) => ({
+    ...agenticUiStageLibrary[stageId],
+    source: explicitStages.has(stageId) ? "intent" : "dependency"
+  }));
+}
+
+function AgenticUiPage() {
+  const [scenarioId, setScenarioId] = useState<AgenticUiScenario["id"]>("withdraw-access");
+  const scenario = agenticUiScenarios.find((item) => item.id === scenarioId) ?? agenticUiScenarios[0];
+  const taskPlan = buildAgenticUiTaskPlan(scenario);
+  const dependencyStages = taskPlan.filter((stage) => stage.source === "dependency");
+  const intentStages = taskPlan.filter((stage) => stage.source === "intent");
+  const hasComposition = taskPlan.some((stage) => stage.id === "ReviewPensionComposition");
+  const hasEligibility = taskPlan.some((stage) => stage.id === "CheckWithdrawalEligibility");
+  const hasImpact = taskPlan.some((stage) => stage.id === "EstimateWithdrawalImpact");
+  const hasRouteComparison = taskPlan.some((stage) => stage.id === "CompareWithdrawalRoutes");
+
+  return (
+    <main className="agentic-ui-shell">
+      <section className="agentic-ui-topbar">
+        <a href="/" className="agentic-ui-link">
+          <PanelsTopLeft size={17} />
+          <span>Agent-Bridge</span>
+        </a>
+        <a href="/agentic" className="agentic-ui-link secondary">
+          <Route size={17} />
+          <span>Runtime demo</span>
+        </a>
+      </section>
+
+      <section className="agentic-ui-hero">
+        <div>
+          <p>Retirement Capability</p>
+          <h1>Agentic UI assembled from business intent.</h1>
+        </div>
+        <div className="agentic-ui-intent-switcher" aria-label="Choose a pension question">
+          {agenticUiScenarios.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={item.id === scenario.id ? "active" : ""}
+              onClick={() => setScenarioId(item.id)}
+            >
+              <span>{item.label}</span>
+              <small>{item.prompt}</small>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="agentic-ui-layout">
+        <aside className="agentic-ui-intent-panel">
+          <div className="agentic-ui-panel-title">
+            <BrainCircuit size={18} />
+            <span>Intent result</span>
+          </div>
+          <blockquote>{scenario.prompt}</blockquote>
+          <dl>
+            <div>
+              <dt>Goal</dt>
+              <dd>{scenario.goal}</dd>
+            </div>
+            <div>
+              <dt>Intent</dt>
+              <dd>{scenario.intent}</dd>
+            </div>
+            <div>
+              <dt>Confidence</dt>
+              <dd>{Math.round(scenario.confidence * 100)}%</dd>
+            </div>
+          </dl>
+        </aside>
+
+        <section className="agentic-ui-workspace" aria-live="polite">
+          <div className="agentic-ui-workspace-head">
+            <div>
+              <span>{scenario.primaryMetric}</span>
+              <h2>{scenario.id === "withdraw-access" ? "Pension access workspace" : "Pension composition workspace"}</h2>
+            </div>
+            <strong>{scenario.secondaryMetric}</strong>
+          </div>
+
+          <div className="agentic-ui-member-strip">
+            <article>
+              <span>Member</span>
+              <strong>Aisha Morgan</strong>
+            </article>
+            <article>
+              <span>Total pension pot</span>
+              <strong>£428,600</strong>
+            </article>
+            <article>
+              <span>Scheme status</span>
+              <strong>Active member</strong>
+            </article>
+          </div>
+
+          {hasComposition ? <PensionCompositionCard compact={scenario.id === "withdraw-access"} /> : null}
+          {hasEligibility ? <WithdrawalEligibilityCard /> : null}
+          {hasImpact ? <WithdrawalImpactCard /> : null}
+          {hasRouteComparison ? <WithdrawalRouteCard /> : null}
+        </section>
+
+        <aside className="agentic-ui-plan-panel">
+          <div className="agentic-ui-panel-title">
+            <GitBranch size={18} />
+            <span>Task Plan</span>
+          </div>
+          <div className="agentic-ui-plan-summary">
+            <div>
+              <span>Intent matched</span>
+              <strong>{intentStages.length} steps</strong>
+            </div>
+            <div>
+              <span>Auto-added</span>
+              <strong>{dependencyStages.length} dependencies</strong>
+            </div>
+          </div>
+          <ol className="agentic-ui-step-list">
+            {taskPlan.map((stage, index) => (
+              <li key={stage.id} className={stage.source}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{stage.title}</strong>
+                  <p>{stage.brief}</p>
+                  <small>{stage.source === "intent" ? "Intent target" : "Auto-added dependency"}</small>
+                </div>
+              </li>
+            ))}
+          </ol>
+          <div className="agentic-ui-stage-contract">
+            <span>Planner input</span>
+            <p>Intent chooses target stages. The stage registry supplies dependencies and allowed components.</p>
+          </div>
+        </aside>
+      </section>
+    </main>
+  );
+}
+
+function PensionCompositionCard({ compact }: { compact: boolean }) {
+  const rows = [
+    { label: "Workplace pension", value: 58, amount: "£248,600" },
+    { label: "Employer contributions", value: 22, amount: "£94,300" },
+    { label: "SIPP holdings", value: 14, amount: "£60,000" },
+    { label: "Cash reserve", value: 6, amount: "£25,700" }
+  ];
+
+  return (
+    <section className={`agentic-ui-business-section ${compact ? "compact" : ""}`}>
+      <div className="agentic-ui-section-head">
+        <div>
+          <span>Pot composition</span>
+          <h3>Where the pension value sits</h3>
+        </div>
+        <BarChart3 size={20} />
+      </div>
+      <div className="agentic-ui-composition">
+        {rows.map((row) => (
+          <div className="agentic-ui-composition-row" key={row.label}>
+            <div>
+              <strong>{row.label}</strong>
+              <span>{row.amount}</span>
+            </div>
+            <div className="agentic-ui-bar" aria-label={`${row.label} ${row.value}%`}>
+              <span style={{ width: `${row.value}%` }} />
+            </div>
+            <em>{row.value}%</em>
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function WithdrawalEligibilityCard() {
+  return (
+    <section className="agentic-ui-business-section">
+      <div className="agentic-ui-section-head">
+        <div>
+          <span>Eligibility</span>
+          <h3>Possible access routes</h3>
+        </div>
+        <ShieldCheck size={20} />
+      </div>
+      <div className="agentic-ui-route-grid">
+        <article className="ready">
+          <span>Available to explore</span>
+          <strong>Flexible access</strong>
+          <p>Needs income impact review before an application can begin.</p>
+        </article>
+        <article>
+          <span>Evidence needed</span>
+          <strong>Hardship route</strong>
+          <p>Requires supporting documents and manual review.</p>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function WithdrawalImpactCard() {
+  return (
+    <section className="agentic-ui-business-section">
+      <div className="agentic-ui-section-head">
+        <div>
+          <span>Impact preview</span>
+          <h3>Illustrative effect of taking £25,000</h3>
+        </div>
+        <Gauge size={20} />
+      </div>
+      <div className="agentic-ui-impact-grid">
+        <article>
+          <span>Pot after withdrawal</span>
+          <strong>£403,600</strong>
+        </article>
+        <article>
+          <span>Future monthly income</span>
+          <strong>-£118</strong>
+        </article>
+        <article>
+          <span>Tax position</span>
+          <strong>Needs confirmation</strong>
+        </article>
+      </div>
+    </section>
+  );
+}
+
+function WithdrawalRouteCard() {
+  return (
+    <section className="agentic-ui-business-section">
+      <div className="agentic-ui-section-head">
+        <div>
+          <span>Next decision</span>
+          <h3>Choose how to continue</h3>
+        </div>
+        <ClipboardList size={20} />
+      </div>
+      <div className="agentic-ui-action-row">
+        <button type="button">
+          <Search size={16} />
+          <span>Compare lower-impact options</span>
+        </button>
+        <button type="button">
+          <LockKeyhole size={16} />
+          <span>Start controlled application</span>
+        </button>
+      </div>
+    </section>
+  );
+}
+
 function extractRetirementAgeFromPrompt(prompt: string) {
   const patterns = [
     /\bretire(?:ment)?\s*(?:at|age)?\s*(\d{2,3})\b/i,
@@ -2334,5 +2716,9 @@ function TraceGroup({ icon, title, items }: { icon: React.ReactNode; title: stri
 }
 
 createRoot(document.getElementById("root")!).render(
-  window.location.pathname.startsWith("/agentic") ? <AgenticWebPage /> : <App />
+  window.location.pathname.startsWith("/agentic-ui")
+    ? <AgenticUiPage />
+    : window.location.pathname.startsWith("/agentic")
+      ? <AgenticWebPage />
+      : <App />
 );

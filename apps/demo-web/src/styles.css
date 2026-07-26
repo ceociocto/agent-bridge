@@ -3252,18 +3252,484 @@ pre {
   color: var(--agentic-green);
 }
 
+.agentic-ui-shell {
+  --ui-ink: #18231f;
+  --ui-muted: #66716d;
+  --ui-soft: #f6f3ea;
+  --ui-panel: #fffdf7;
+  --ui-line: #d9d3c5;
+  --ui-green: #1f6a58;
+  --ui-blue: #2f5d7c;
+  --ui-gold: #b17a15;
+  --ui-red: #9b3f31;
+  min-height: 100vh;
+  padding: 24px;
+  color: var(--ui-ink);
+  background:
+    linear-gradient(180deg, rgba(255, 253, 247, 0.72), rgba(246, 243, 234, 0.96)),
+    var(--ui-soft);
+}
+
+.agentic-ui-topbar,
+.agentic-ui-hero,
+.agentic-ui-layout {
+  max-width: 1460px;
+  margin: 0 auto;
+}
+
+.agentic-ui-topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 26px;
+}
+
+.agentic-ui-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--ui-ink);
+  background: var(--ui-panel);
+  font-size: 13px;
+  font-weight: 800;
+  text-decoration: none;
+}
+
+.agentic-ui-link.secondary {
+  color: var(--ui-blue);
+}
+
+.agentic-ui-hero {
+  display: grid;
+  grid-template-columns: minmax(320px, 0.72fr) minmax(420px, 1fr);
+  align-items: end;
+  gap: 22px;
+  margin-bottom: 22px;
+}
+
+.agentic-ui-hero p,
+.agentic-ui-section-head span,
+.agentic-ui-panel-title span,
+.agentic-ui-workspace-head span,
+.agentic-ui-member-strip span,
+.agentic-ui-plan-summary span,
+.agentic-ui-stage-contract span,
+.agentic-ui-impact-grid span,
+.agentic-ui-route-grid article span {
+  margin: 0;
+  color: var(--ui-muted);
+  font-size: 11px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.agentic-ui-hero h1 {
+  max-width: 760px;
+  margin: 8px 0 0;
+  color: var(--ui-ink);
+  font-size: clamp(36px, 5vw, 64px);
+  line-height: 0.98;
+}
+
+.agentic-ui-intent-switcher {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+
+.agentic-ui-intent-switcher button {
+  min-height: 112px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  padding: 15px;
+  color: var(--ui-ink);
+  background: var(--ui-panel);
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 180ms ease, background 180ms ease, transform 180ms ease;
+}
+
+.agentic-ui-intent-switcher button:hover,
+.agentic-ui-intent-switcher button.active {
+  border-color: var(--ui-green);
+  background: #eef5ef;
+  transform: translateY(-1px);
+}
+
+.agentic-ui-intent-switcher span {
+  display: block;
+  font-size: 15px;
+  font-weight: 850;
+}
+
+.agentic-ui-intent-switcher small {
+  display: block;
+  margin-top: 10px;
+  color: var(--ui-muted);
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.agentic-ui-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 330px) minmax(0, 1fr) minmax(280px, 340px);
+  gap: 16px;
+  align-items: start;
+}
+
+.agentic-ui-intent-panel,
+.agentic-ui-workspace,
+.agentic-ui-plan-panel {
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  background: var(--ui-panel);
+}
+
+.agentic-ui-intent-panel,
+.agentic-ui-plan-panel {
+  position: sticky;
+  top: 20px;
+  padding: 18px;
+}
+
+.agentic-ui-panel-title,
+.agentic-ui-section-head,
+.agentic-ui-workspace-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.agentic-ui-panel-title {
+  justify-content: flex-start;
+  color: var(--ui-green);
+}
+
+.agentic-ui-intent-panel blockquote {
+  margin: 18px 0;
+  border-left: 3px solid var(--ui-green);
+  padding: 2px 0 2px 13px;
+  color: var(--ui-ink);
+  font-size: 19px;
+  line-height: 1.25;
+}
+
+.agentic-ui-intent-panel dl {
+  display: grid;
+  gap: 14px;
+  margin: 0;
+}
+
+.agentic-ui-intent-panel dt {
+  color: var(--ui-muted);
+  font-size: 11px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.agentic-ui-intent-panel dd {
+  margin: 5px 0 0;
+  color: var(--ui-ink);
+  font-size: 13px;
+  line-height: 1.42;
+}
+
+.agentic-ui-workspace {
+  padding: 18px;
+}
+
+.agentic-ui-workspace-head {
+  border-bottom: 1px solid var(--ui-line);
+  padding-bottom: 15px;
+}
+
+.agentic-ui-workspace-head h2,
+.agentic-ui-section-head h3 {
+  margin: 4px 0 0;
+  color: var(--ui-ink);
+  font-size: 26px;
+  line-height: 1.05;
+}
+
+.agentic-ui-workspace-head strong {
+  border: 1px solid #c7dccf;
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--ui-green);
+  background: #eef7f1;
+  font-size: 12px;
+}
+
+.agentic-ui-member-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10px;
+  margin: 16px 0;
+}
+
+.agentic-ui-member-strip article {
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  padding: 13px;
+  background: #fbf8ef;
+}
+
+.agentic-ui-member-strip strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 17px;
+}
+
+.agentic-ui-business-section {
+  border-top: 1px solid var(--ui-line);
+  padding: 18px 0 0;
+  margin-top: 18px;
+}
+
+.agentic-ui-business-section.compact {
+  padding-top: 14px;
+}
+
+.agentic-ui-section-head svg {
+  color: var(--ui-blue);
+}
+
+.agentic-ui-section-head h3 {
+  font-size: 21px;
+}
+
+.agentic-ui-composition {
+  display: grid;
+  gap: 12px;
+  margin-top: 16px;
+}
+
+.agentic-ui-composition-row {
+  display: grid;
+  grid-template-columns: minmax(160px, 0.42fr) minmax(180px, 1fr) 46px;
+  gap: 12px;
+  align-items: center;
+}
+
+.agentic-ui-composition-row strong,
+.agentic-ui-composition-row span {
+  display: block;
+}
+
+.agentic-ui-composition-row strong {
+  font-size: 14px;
+}
+
+.agentic-ui-composition-row div > span {
+  margin-top: 3px;
+  color: var(--ui-muted);
+  font-size: 12px;
+}
+
+.agentic-ui-composition-row em {
+  color: var(--ui-ink);
+  font-size: 13px;
+  font-style: normal;
+  font-weight: 850;
+  text-align: right;
+}
+
+.agentic-ui-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: #e7e0d2;
+  overflow: hidden;
+}
+
+.agentic-ui-bar span {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--ui-green), var(--ui-blue));
+}
+
+.agentic-ui-route-grid,
+.agentic-ui-impact-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.agentic-ui-route-grid article,
+.agentic-ui-impact-grid article {
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  padding: 14px;
+  background: #fbf8ef;
+}
+
+.agentic-ui-route-grid article.ready {
+  border-color: #c7dccf;
+  background: #f0f7f1;
+}
+
+.agentic-ui-route-grid strong,
+.agentic-ui-impact-grid strong {
+  display: block;
+  margin-top: 5px;
+  font-size: 18px;
+}
+
+.agentic-ui-route-grid p {
+  margin: 8px 0 0;
+  color: var(--ui-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.agentic-ui-impact-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.agentic-ui-action-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.agentic-ui-action-row button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  min-height: 46px;
+  border: 1px solid var(--ui-green);
+  border-radius: 8px;
+  color: #f8fbf7;
+  background: var(--ui-green);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.agentic-ui-action-row button + button {
+  border-color: var(--ui-line);
+  color: var(--ui-ink);
+  background: var(--ui-panel);
+}
+
+.agentic-ui-plan-summary {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 16px 0;
+}
+
+.agentic-ui-plan-summary div {
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  padding: 11px;
+  background: #fbf8ef;
+}
+
+.agentic-ui-plan-summary strong {
+  display: block;
+  margin-top: 4px;
+  font-size: 18px;
+}
+
+.agentic-ui-step-list {
+  display: grid;
+  gap: 9px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.agentic-ui-step-list li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  border: 1px solid var(--ui-line);
+  border-radius: 8px;
+  padding: 10px;
+  background: #fbf8ef;
+}
+
+.agentic-ui-step-list li.intent {
+  border-color: #c7dccf;
+  background: #eef7f1;
+}
+
+.agentic-ui-step-list li > span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 999px;
+  color: #fffdf7;
+  background: var(--ui-blue);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.agentic-ui-step-list li.intent > span {
+  background: var(--ui-green);
+}
+
+.agentic-ui-step-list strong,
+.agentic-ui-step-list p,
+.agentic-ui-step-list small {
+  display: block;
+}
+
+.agentic-ui-step-list strong {
+  font-size: 13px;
+}
+
+.agentic-ui-step-list p {
+  margin: 4px 0 6px;
+  color: var(--ui-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.agentic-ui-step-list small {
+  color: var(--ui-gold);
+  font-size: 11px;
+  font-weight: 850;
+}
+
+.agentic-ui-stage-contract {
+  border-top: 1px solid var(--ui-line);
+  margin-top: 16px;
+  padding-top: 14px;
+}
+
+.agentic-ui-stage-contract p {
+  margin: 6px 0 0;
+  color: var(--ui-muted);
+  font-size: 13px;
+  line-height: 1.42;
+}
+
 @media (max-width: 1100px) {
   .workspace,
   .response-grid,
   .demo-thesis,
   .agentic-layout,
-  .a2ui-surface {
+  .a2ui-surface,
+  .agentic-ui-hero,
+  .agentic-ui-layout {
     grid-template-columns: 1fr;
   }
 
   .agent-console,
   .agentic-assistant-panel,
-  .agentic-event-panel {
+  .agentic-event-panel,
+  .agentic-ui-intent-panel,
+  .agentic-ui-plan-panel {
     position: static;
     max-height: none;
   }
@@ -3301,17 +3767,25 @@ pre {
     grid-template-columns: 1fr;
   }
 
+  .agentic-ui-layout {
+    align-items: stretch;
+  }
+
 }
 
 @media (max-width: 720px) {
   .shell,
-  .agentic-shell {
+  .agentic-shell,
+  .agentic-ui-shell {
     padding: 18px;
   }
 
   .masthead,
   .agentic-topbar,
-  .agentic-result-head {
+  .agentic-result-head,
+  .agentic-ui-topbar,
+  .agentic-ui-workspace-head,
+  .agentic-ui-section-head {
     align-items: start;
     flex-direction: column;
   }
@@ -3422,6 +3896,20 @@ pre {
 
   .workflow-action-bar > span {
     display: none;
+  }
+
+  .agentic-ui-intent-switcher,
+  .agentic-ui-member-strip,
+  .agentic-ui-route-grid,
+  .agentic-ui-impact-grid,
+  .agentic-ui-action-row,
+  .agentic-ui-plan-summary,
+  .agentic-ui-composition-row {
+    grid-template-columns: 1fr;
+  }
+
+  .agentic-ui-composition-row em {
+    text-align: left;
   }
 }
 
