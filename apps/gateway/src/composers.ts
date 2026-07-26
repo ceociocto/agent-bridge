@@ -17,6 +17,14 @@ function money(value: number) {
   }).format(value);
 }
 
+function yuan(value: number) {
+  return new Intl.NumberFormat("zh-CN", {
+    style: "currency",
+    currency: "CNY",
+    maximumFractionDigits: 0
+  }).format(value);
+}
+
 function totalBalance(accounts: Array<{ balance: number }>) {
   return accounts.reduce((sum, account) => sum + account.balance, 0);
 }
@@ -776,4 +784,254 @@ export async function composeAdviserModelPortfolioReview(
     ],
     ...base
   };
+}
+
+type PensionTaskIntent = "cash_access_exploration" | "retirement_claim_planning" | "pot_composition";
+
+function resolvePensionTaskIntent(input: CapabilityInvokeInput): PensionTaskIntent {
+  return input.pensionTaskIntent ?? "pot_composition";
+}
+
+function pensionTaskPlan(intent: PensionTaskIntent) {
+  const base = [
+    {
+      id: "ResolveMemberIntent",
+      title: "解析用户目标",
+      source: "auto",
+      microWorkflow: "intent_resolution",
+      component: "IntentSummary"
+    },
+    {
+      id: "LoadRetirementProfile",
+      title: "读取会员画像",
+      source: "dependency",
+      microWorkflow: "member_context_loading",
+      component: "KnownFacts"
+    },
+    {
+      id: "LoadPensionPortfolio",
+      title: "读取账户信息",
+      source: "dependency",
+      microWorkflow: "pension_portfolio_loading",
+      component: "AccountStrip"
+    }
+  ];
+
+  if (intent === "cash_access_exploration") {
+    return [
+      ...base,
+      {
+        id: "CheckAccessEligibility",
+        title: "检查可提取资格",
+        source: "intent",
+        microWorkflow: "withdrawal_eligibility_check",
+        component: "EligibilityRoutes"
+      },
+      {
+        id: "EstimateWithdrawalImpact",
+        title: "估算到账影响",
+        source: "intent",
+        microWorkflow: "withdrawal_impact_simulation",
+        component: "ImpactPreview"
+      },
+      {
+        id: "NextDecisionGate",
+        title: "等待你的决定",
+        source: "policy",
+        microWorkflow: "controlled_application_gate",
+        component: "DecisionGate"
+      }
+    ];
+  }
+
+  if (intent === "retirement_claim_planning") {
+    return [
+      ...base,
+      {
+        id: "BuildRetirementTimeline",
+        title: "生成退休时间线",
+        source: "intent",
+        microWorkflow: "retirement_timeline_projection",
+        component: "Timeline"
+      },
+      {
+        id: "CompareClaimStrategies",
+        title: "比较领取策略",
+        source: "intent",
+        microWorkflow: "claim_strategy_comparison",
+        component: "StrategyMatrix"
+      },
+      {
+        id: "NextDecisionGate",
+        title: "下一步决策门",
+        source: "policy",
+        microWorkflow: "controlled_claim_gate",
+        component: "DecisionGate"
+      }
+    ];
+  }
+
+  return [
+    ...base,
+    {
+      id: "ReviewPensionComposition",
+      title: "查看账户构成",
+      source: "intent",
+      microWorkflow: "pension_composition_analysis",
+      component: "CompositionChart"
+    }
+  ];
+}
+
+export async function composeRetirementPensionTaskOrchestration(
+  capability: CapabilityDefinition,
+  input: CapabilityInvokeInput
+): Promise<AgentReadableResult> {
+  const intent = resolvePensionTaskIntent(input);
+  const compositionSteps: AuditStep[] = [
+    {
+      name: "resolve_pension_task_intent",
+      status: "completed",
+      detail: `Selected ${intent} inside the unified pension orchestration capability.`
+    }
+  ];
+  const sourceApis = ["CN Retirement Profile API", "CN Pension Portfolio API"];
+
+  const [profile, portfolio] = await Promise.all([
+    valueStreamClient.cnRetirementProfile(input.customerId),
+    valueStreamClient.cnPensionPortfolio(input.customerId)
+  ]);
+  compositionSteps.push({
+    name: "load_known_pension_context",
+    status: "completed",
+    detail: "Composed CN Retirement Profile and CN Pension Portfolio APIs before asking the user for more data."
+  });
+
+  const selectedTaskPlan = pensionTaskPlan(intent);
+  const policyChecks = evaluatePolicy(capability);
+  policyChecks.push({
+    name: "formal_execution_gate",
+    status: "requires_confirmation",
+    detail: "Exploration and planning outputs do not submit withdrawal or claim applications."
+  });
+
+  const result: Record<string, unknown> & {
+    capability: CapabilityDefinition["id"];
+    summary: string;
+    next_actions: Array<Record<string, unknown>>;
+  } = {
+    capability: capability.id,
+    workflow_id: "retirement_pension_task_orchestration",
+    sub_intent: intent,
+    composition_mode: "capability_internal_dynamic_task_plan",
+    task_plan: selectedTaskPlan,
+    customer: {
+      customer_id: profile.customerId,
+      name: profile.name,
+      age: profile.age,
+      identity_status: profile.identityStatus,
+      verified_bank_account: profile.verifiedBankAccount
+    },
+    pension_portfolio: {
+      total_balance: yuan(portfolio.totalBalance),
+      accounts: portfolio.accounts.map((account) => ({
+        label: account.wrapper,
+        balance: yuan(account.balance),
+        ratio: `${account.ratio}%`
+      }))
+    },
+    next_actions: [],
+    summary: ""
+  };
+
+  if (intent === "cash_access_exploration") {
+    const amount = input.requestedWithdrawalAmount ?? 100000;
+    const eligibility = await valueStreamClient.cnWithdrawalEligibility(input.customerId);
+    const maxAllowedAmount = Math.max(...eligibility.routes.map((route) => route.maximumAmount));
+    const exceedsCapabilityLimit = amount > maxAllowedAmount;
+    const impactAmount = exceedsCapabilityLimit ? maxAllowedAmount : amount;
+    const impact = await valueStreamClient.cnWithdrawalImpact({ customerId: input.customerId, amount: impactAmount });
+    sourceApis.push("CN Withdrawal Eligibility API", "CN Withdrawal Impact API");
+    compositionSteps.push({
+      name: "compose_cash_access_workflow",
+      status: "completed",
+      detail: "Composed withdrawal eligibility and impact APIs for the cash-access exploration path."
+    });
+    result.summary = exceedsCapabilityLimit
+      ? `${profile.name} 的目标金额 ${yuan(amount)} 超过当前所有可行路径上限 ${yuan(maxAllowedAmount)}，暂不能继续提交申请。`
+      : `${profile.name} 的资金提取方案已准备：本次按 ${yuan(amount)} 估算预计到账和长期影响，尚未创建正式申请。`;
+    result.withdrawal_eligibility = {
+      status: eligibility.status,
+      formal_application_started: eligibility.formalApplicationStarted,
+      routes: eligibility.routes.map((route) => ({
+        label: route.label,
+        maximum_amount: yuan(route.maximumAmount),
+        required_evidence: route.requiredEvidence,
+        manual_review_required: route.manualReviewRequired
+      }))
+    };
+    result.withdrawal_impact = {
+      requested_amount: yuan(amount),
+      effective_amount: yuan(impact.requestedAmount),
+      estimated_net: `${yuan(impact.estimatedNetLow)} - ${yuan(impact.estimatedNetHigh)}`,
+      projected_balance_after: yuan(impact.projectedBalanceAfter),
+      monthly_income_reduction: yuan(impact.monthlyIncomeReduction),
+      revocability_window_minutes: impact.revocabilityWindowMinutes
+    };
+    result.limit_check = {
+      requested_amount: yuan(amount),
+      maximum_supported_amount: yuan(maxAllowedAmount),
+      status: exceedsCapabilityLimit ? "blocked" : "within_supported_routes",
+      reason: exceedsCapabilityLimit ? "REQUESTED_AMOUNT_EXCEEDS_ALL_ROUTES" : "REQUESTED_AMOUNT_WITHIN_ROUTE_SPACE"
+    };
+    result.next_actions = exceedsCapabilityLimit
+      ? [
+          { action: "reduce_requested_amount", required: true },
+          { action: "compare_available_routes", recommended: true }
+        ]
+      : [
+          { action: "confirm_withdrawal_reason", required: true },
+          { action: "compare_lower_impact_options", recommended: true },
+          { action: "start_controlled_application", requires_explicit_authorization: true }
+        ];
+  } else if (intent === "retirement_claim_planning") {
+    const options = await valueStreamClient.cnRetirementClaimOptions({
+      customerId: input.customerId,
+      targetRetirementAge: input.targetRetirementAge
+    });
+    sourceApis.push("CN Retirement Claim Options API");
+    compositionSteps.push({
+      name: "compose_retirement_claim_planning_workflow",
+      status: "completed",
+      detail: "Composed retirement claim options API for the planning path."
+    });
+    result.summary = `${profile.name} 的任务被收敛为退休时间与领取策略规划；当前只比较方案，尚未进入领取申请。`;
+    result.retirement_options = {
+      target_retirement_age: options.targetRetirementAge,
+      formal_claim_started: options.formalClaimStarted,
+      options: options.options.map((option) => ({
+        retirement_age: option.retirementAge,
+        projected_balance: yuan(option.projectedBalance),
+        estimated_monthly_income: yuan(option.estimatedMonthlyIncome),
+        fit_score: `${option.fitScore}%`
+      })),
+      claim_strategies: options.claimStrategies
+    };
+    result.next_actions = [
+      { action: "choose_retirement_age_to_compare", recommended: true },
+      { action: "choose_claim_strategy", recommended: true },
+      { action: "start_controlled_claim_application", requires_explicit_authorization: true }
+    ];
+  } else {
+    result.summary = `${profile.name} 的养老金账户总额为 ${yuan(portfolio.totalBalance)}，当前任务只展示账户构成。`;
+    result.next_actions = [
+      { action: "explain_account_components", recommended: true },
+      { action: "evaluate_cash_access_or_retirement_claim", recommended: false }
+    ];
+  }
+
+  return {
+    ...result,
+    ...createResultBase(capability, input, policyChecks, compositionSteps, sourceApis)
+  } as AgentReadableResult;
 }

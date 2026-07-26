@@ -4,7 +4,8 @@ export const capabilityIds = [
   "personal_investing_isa_allowance_review",
   "sipp_drawdown_pathway_review",
   "workplace_pension_contribution_guidance",
-  "adviser_platform_model_portfolio_review"
+  "adviser_platform_model_portfolio_review",
+  "retirement_pension_task_orchestration"
 ] as const;
 
 export type CapabilityId = (typeof capabilityIds)[number];
@@ -21,7 +22,8 @@ export type IsaWorkflowId = (typeof isaWorkflowIds)[number];
 export const microWorkflowIds = [
   "isa_subscription_feasibility",
   "adviser_review_pack_generation",
-  "retirement_goal_gap_projection"
+  "retirement_goal_gap_projection",
+  "retirement_pension_task_orchestration"
 ] as const;
 
 export type MicroWorkflowId = (typeof microWorkflowIds)[number];
@@ -38,6 +40,10 @@ export const capabilityInvokeSchema = z.object({
     .optional(),
   adviserFirmId: z.string().min(1).optional(),
   riskProfile: z.enum(["cautious", "balanced", "growth", "adventurous"]).optional(),
+  pensionTaskIntent: z
+    .enum(["cash_access_exploration", "retirement_claim_planning", "pot_composition"])
+    .optional(),
+  requestedWithdrawalAmount: z.number().min(0).max(1000000).optional(),
   microWorkflowId: z.enum(microWorkflowIds).optional()
 });
 

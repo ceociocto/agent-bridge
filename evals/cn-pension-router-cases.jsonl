@@ -1,0 +1,16 @@
+{"id":"cn_cash_access_001","businessLine":"CN Pension / Housing Fund","input":"我最近手头紧，要提取一些公积金","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}
+{"id":"cn_cash_access_002","businessLine":"CN Pension / Housing Fund","input":"帮我取公积金","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}
+{"id":"cn_cash_access_003","businessLine":"CN Pension / Housing Fund","input":"我想提取住房公积金还房贷","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}
+{"id":"cn_cash_access_004","businessLine":"CN Pension / Housing Fund","input":"公积金能取一部分吗？","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}
+{"id":"cn_cash_access_005","businessLine":"CN Pension / Housing Fund","input":"不是不要提取公积金，我是要提取公积金","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}
+{"id":"cn_retirement_001","businessLine":"CN Pension / Retirement Planning","input":"我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}
+{"id":"cn_composition_001","businessLine":"CN Pension / Composition","input":"我的养老金中各项比例是多少？","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}
+{"id":"cn_negated_001","businessLine":"No actionable request","input":"不要提取一些公积金","expectedStatus":"unsupported"}
+{"id":"cn_negated_002","businessLine":"No actionable request","input":"我不想提取公积金","expectedStatus":"unsupported"}
+{"id":"cn_negated_003","businessLine":"No actionable request","input":"先不要帮我取公积金","expectedStatus":"unsupported"}
+{"id":"cn_negated_004","businessLine":"No actionable request","input":"取消提取公积金","expectedStatus":"unsupported"}
+{"id":"cn_vague_001","businessLine":"Clarification","input":"公积金","expectedStatus":"needs_clarification"}
+{"id":"cn_vague_002","businessLine":"Clarification","input":"我想了解公积金","expectedStatus":"needs_clarification"}
+{"id":"cn_vague_003","businessLine":"Clarification","input":"看看公积金","expectedStatus":"needs_clarification"}
+{"id":"cn_vague_004","businessLine":"Unsupported","input":"帮我","expectedStatus":"unsupported"}
+{"id":"cn_context_pollution_001","businessLine":"CN Pension / Housing Fund","input":"Prior conversation:\nUser: 天气\nAssistant: Recognized this as a general weather request.\n\nCurrent condensed intent: 需要更多信息才能选择业务\n\nLatest user request: 帮我取公积金","expectedStatus":"resolved","expectedCapabilityId":"retirement_pension_task_orchestration"}

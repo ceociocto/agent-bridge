@@ -1,4 +1,4 @@
-export type CustomerId = "UK001" | "UK002" | "UK003";
+export type CustomerId = "UK001" | "UK002" | "UK003" | "CN001";
 
 export const profiles = {
   UK001: {
@@ -33,6 +33,17 @@ export const profiles = {
     targetAnnualRetirementSpending: 48000,
     riskProfile: "balanced",
     segment: "workplace_and_advised"
+  },
+  CN001: {
+    customerId: "CN001",
+    name: "陈女士",
+    age: 58,
+    annualIncome: 320000,
+    householdStatus: "married",
+    retirementGoalAge: 63,
+    targetAnnualRetirementSpending: 180000,
+    riskProfile: "balanced",
+    segment: "cn_retirement_member"
   }
 } as const;
 
@@ -90,6 +101,32 @@ export const accounts = {
       eligibleForContribution: false,
       wrapper: "Adviser Platform"
     }
+  ],
+  CN001: [
+    {
+      accountId: "CN-BASIC-001",
+      type: "basic_pension",
+      status: "active",
+      balance: 306000,
+      eligibleForContribution: true,
+      wrapper: "基础养老金账户"
+    },
+    {
+      accountId: "CN-ANNUITY-001",
+      type: "enterprise_annuity",
+      status: "active",
+      balance: 238000,
+      eligibleForContribution: true,
+      wrapper: "企业年金"
+    },
+    {
+      accountId: "CN-PERSONAL-001",
+      type: "personal_pension",
+      status: "active",
+      balance: 136000,
+      eligibleForContribution: true,
+      wrapper: "个人养老金"
+    }
   ]
 } as const;
 
@@ -123,6 +160,15 @@ export const holdings = {
     },
     topHoldings: ["Balanced Model Portfolio", "Global Equity Fund", "UK Corporate Bond Fund"],
     riskExposure: "balanced_model_with_minor_drift"
+  },
+  CN001: {
+    allocation: {
+      basic: 45,
+      enterpriseAnnuity: 35,
+      personalPension: 20
+    },
+    topHoldings: ["基础养老金账户", "企业年金稳健组合", "个人养老金目标日期组合"],
+    riskExposure: "balanced_retirement_income"
   }
 } as const;
 
@@ -150,6 +196,14 @@ export const isaSubscriptions = {
     cashIsaSubscribed: 0,
     flexibleIsaReplacementAvailable: 0,
     uninvestedCash: 1800
+  },
+  CN001: {
+    taxYear: "2026",
+    annualIsaAllowance: 0,
+    stocksAndSharesIsaSubscribed: 0,
+    cashIsaSubscribed: 0,
+    flexibleIsaReplacementAvailable: 0,
+    uninvestedCash: 0
   }
 } as const;
 
@@ -176,6 +230,14 @@ export const drawdownProfiles = {
     taxFreeCashTaken: 0,
     currentAnnualIncome: 0,
     selectedPathwayGoal: "keep_invested",
+    taxableIncomeTaken: false
+  },
+  CN001: {
+    pensionPot: 680000,
+    crystallisedAmount: 0,
+    taxFreeCashTaken: 0,
+    currentAnnualIncome: 0,
+    selectedPathwayGoal: "retirement_claim_planning",
     taxableIncomeTaken: false
   }
 } as const;
@@ -204,6 +266,14 @@ export const workplacePlans = {
     employerMatchMaxRate: 8,
     salarySacrificeAvailable: true,
     planDefaultFund: "FutureWise Balanced"
+  },
+  CN001: {
+    employerName: "上海示例制造集团",
+    employeeContributionRate: 8,
+    employerContributionRate: 6,
+    employerMatchMaxRate: 8,
+    salarySacrificeAvailable: false,
+    planDefaultFund: "稳健养老目标组合"
   }
 } as const;
 
@@ -237,6 +307,16 @@ export const contributions = {
       { year: 2025, rate: 6 },
       { year: 2026, rate: 6 }
     ]
+  },
+  CN001: {
+    currentRate: 8,
+    yearToDateEmployeeContribution: 25600,
+    yearToDateEmployerContribution: 19200,
+    history: [
+      { year: 2024, rate: 7 },
+      { year: 2025, rate: 8 },
+      { year: 2026, rate: 8 }
+    ]
   }
 } as const;
 
@@ -261,6 +341,47 @@ export const taxLimits = {
     moneyPurchaseAnnualAllowance: 10000,
     mpaaTriggered: false,
     remainingPensionAnnualAllowance: 50200
+  },
+  CN001: {
+    taxYear: "2026",
+    pensionAnnualAllowance: 120000,
+    moneyPurchaseAnnualAllowance: 12000,
+    mpaaTriggered: false,
+    remainingPensionAnnualAllowance: 75200
+  }
+} as const;
+
+export const cnPensionProfiles = {
+  CN001: {
+    customerId: "CN001",
+    name: "陈女士",
+    age: 58,
+    employmentStatus: "employed",
+    identityStatus: "verified",
+    verifiedBankAccount: "招商银行 尾号 3281",
+    ordinaryRetirementAge: 60,
+    targetRetirementAge: 63
+  }
+} as const;
+
+export const cnWithdrawalRules = {
+  CN001: {
+    eligibleRoutes: [
+      {
+        route: "housing",
+        label: "住房公积金提取",
+        maximumAmount: 120000,
+        requiredEvidence: ["主要住房声明", "贷款余额证明"],
+        manualReviewRequired: false
+      },
+      {
+        route: "hardship",
+        label: "困难救济提取",
+        maximumAmount: 50000,
+        requiredEvidence: ["经济困难证明", "收入变化说明"],
+        manualReviewRequired: true
+      }
+    ]
   }
 } as const;
 
@@ -294,9 +415,19 @@ export const adviserPortfolios = {
     driftScore: 5.6,
     rebalanceRecommended: true,
     platformAssets: 365000
+  },
+  CN001: {
+    adviserFirmId: "CN-RET",
+    adviserFirmName: "养老金服务中心",
+    modelPortfolioName: "稳健养老目标组合",
+    targetRiskProfile: "balanced",
+    lastSuitabilityReviewDate: "2026-06-10",
+    driftScore: 2.4,
+    rebalanceRecommended: false,
+    platformAssets: 680000
   }
 } as const;
 
 export function isCustomerId(value: string): value is CustomerId {
-  return value === "UK001" || value === "UK002" || value === "UK003";
+  return value === "UK001" || value === "UK002" || value === "UK003" || value === "CN001";
 }

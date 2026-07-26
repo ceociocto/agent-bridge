@@ -9,6 +9,7 @@ export type InputExtractor =
   | { kind: "retirement_age" }
   | { kind: "isa_workflow" }
   | { kind: "drawdown_goal" }
+  | { kind: "pension_task_intent" }
   | { kind: "risk_profile" };
 
 export type InputContractField = {
@@ -305,6 +306,87 @@ export const capabilityPackages: CapabilityPackage[] = [
         source: "valueStream.adviserPortfolio",
         params: { customerId: "$input.customerId" },
         provides: ["modelName", "targetRiskProfile", "driftScore"]
+      }
+    ]
+  },
+  {
+    id: "retirement_pension_task_orchestration",
+    version: "2026.07.1",
+    intent: {
+      examples: [
+        "我最近缺钱，想看看能不能从养老金里取一部分。",
+        "我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。"
+      ],
+      keywords: ["养老金", "提取", "缺钱", "退休", "领取", "比例", "账户构成"],
+      negativeExamples: ["Can I add money to my ISA?", "Prepare an adviser review pack."]
+    },
+    input: {
+      customerId: {
+        type: "string",
+        required: true,
+        extractors: [{ kind: "body" }]
+      },
+      pensionTaskIntent: {
+        type: "enum",
+        extractors: [{ kind: "body" }, { kind: "pension_task_intent" }],
+        validation: {
+          allowedValues: ["cash_access_exploration", "retirement_claim_planning", "pot_composition"],
+          outOfRange: "reject"
+        }
+      },
+      requestedWithdrawalAmount: {
+        type: "number",
+        extractors: [{ kind: "body" }, { kind: "money_after", keywords: ["提取", "取", "拿", "withdraw"] }],
+        validation: { min: 0, max: 1000000, outOfRange: "reject" },
+        sourcePriority: ["prompt", "body"],
+        mutable: true,
+        ui: { control: "slider", min: 0, max: 200000, step: 5000 }
+      },
+      targetRetirementAge: {
+        type: "integer",
+        defaultValue: 63,
+        extractors: [{ kind: "body" }, { kind: "retirement_age" }],
+        validation: { min: 50, max: 75, outOfRange: "clarify" },
+        mutable: true,
+        ui: { control: "stepper", min: 50, max: 75, step: 1 }
+      },
+      microWorkflowId: {
+        type: "enum",
+        extractors: [{ kind: "body" }],
+        validation: { allowedValues: ["retirement_pension_task_orchestration"], outOfRange: "reject" }
+      }
+    },
+    policies: [
+      {
+        id: "no_execution_without_explicit_authorization",
+        when: "result.formalApplicationStarted == false",
+        effect: "confirmation_required"
+      }
+    ],
+    workflows: [
+      {
+        id: "retirement_pension_task_orchestration",
+        mutableFields: ["pensionTaskIntent", "requestedWithdrawalAmount", "targetRetirementAge"],
+        steps: [
+          { id: "resolve_intent", uiHint: "scenario_comparison" },
+          { id: "load_context", uiHint: "scenario_comparison" },
+          { id: "compose_dynamic_steps", uiHint: "scenario_comparison" },
+          { id: "next_decision_gate", uiHint: "scenario_comparison" }
+        ]
+      }
+    ],
+    apiBindings: [
+      {
+        id: "cn_profile",
+        source: "valueStream.cnRetirementProfile",
+        params: { customerId: "$input.customerId" },
+        provides: ["age", "identityStatus", "ordinaryRetirementAge"]
+      },
+      {
+        id: "cn_portfolio",
+        source: "valueStream.cnPensionPortfolio",
+        params: { customerId: "$input.customerId" },
+        provides: ["totalBalance", "accounts"]
       }
     ]
   }

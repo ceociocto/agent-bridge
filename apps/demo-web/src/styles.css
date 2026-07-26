@@ -1806,9 +1806,30 @@ pre {
 }
 
 .agentic-layout {
-  grid-template-columns: minmax(286px, 348px) minmax(0, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(310px, 370px);
   gap: 18px;
   align-items: start;
+}
+
+.agentic-shell.engaged .agentic-layout {
+  animation: split-layout-enter 540ms var(--ease-out-expo) both;
+}
+
+.agentic-shell:not(.engaged) .agentic-layout {
+  grid-template-columns: 1fr;
+  max-width: none;
+}
+
+.agentic-shell:not(.engaged) .agentic-main {
+  min-height: calc(100vh - 36px);
+}
+
+.agentic-shell:not(.engaged) .agentic-topbar {
+  display: none;
+}
+
+.agentic-shell.engaged .agentic-topbar {
+  animation: topbar-enter 420ms var(--ease-out-expo) 120ms both;
 }
 
 .agentic-assistant-panel,
@@ -1824,8 +1845,19 @@ pre {
 }
 
 .agentic-assistant-panel {
-  max-height: none;
-  overflow: visible;
+  display: grid;
+  grid-template-rows: auto auto minmax(180px, 1fr) auto auto auto;
+  min-height: calc(100vh - 84px);
+  max-height: calc(100vh - 36px);
+  overflow: hidden;
+}
+
+.agentic-shell.engaged .agentic-assistant-panel {
+  animation: assistant-panel-enter 560ms var(--ease-out-expo) 150ms both;
+}
+
+.agentic-shell:not(.engaged) .agentic-assistant-panel {
+  display: none;
 }
 
 .assistant-panel-head span,
@@ -1837,6 +1869,31 @@ pre {
 
 .assistant-panel-head strong {
   color: var(--agentic-text);
+}
+
+.new-conversation-button {
+  display: inline-grid;
+  place-items: center;
+  width: 34px;
+  height: 34px;
+  flex: 0 0 auto;
+  border: 1px solid var(--agentic-line);
+  border-radius: 50%;
+  color: var(--agentic-muted);
+  background: rgba(255, 255, 255, 0.045);
+  transition:
+    background 220ms var(--ease-out-expo),
+    color 220ms var(--ease-out-expo),
+    border-color 220ms var(--ease-out-expo),
+    transform 220ms var(--ease-out-expo);
+}
+
+.new-conversation-button:hover,
+.new-conversation-button:focus-visible {
+  border-color: rgba(183, 240, 106, 0.55);
+  color: var(--agentic-green);
+  background: rgba(183, 240, 106, 0.1);
+  transform: rotate(-24deg);
 }
 
 .scenario-mode-strip {
@@ -1869,6 +1926,125 @@ pre {
   background: var(--agentic-green);
   border-color: transparent;
   transform: translateY(-1px);
+}
+
+.intent-focus-card {
+  display: grid;
+  gap: 5px;
+  border: 1px solid rgba(183, 240, 106, 0.3);
+  border-radius: 8px;
+  background: rgba(183, 240, 106, 0.08);
+  padding: 11px;
+}
+
+.intent-focus-card span,
+.intent-focus-card small {
+  color: var(--agentic-muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.intent-focus-card strong {
+  color: var(--agentic-text);
+  font-size: 13px;
+  line-height: 1.35;
+}
+
+.agentic-chat-history {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-block: 1px solid var(--agentic-line);
+  margin-inline: -14px;
+  padding: 12px 14px;
+  scrollbar-color: rgba(183, 240, 106, 0.5) transparent;
+}
+
+.agentic-chat-turn {
+  display: grid;
+  gap: 6px;
+  width: min(92%, 300px);
+  border: 1px solid var(--agentic-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+  padding: 10px;
+  animation: panel-arrive 360ms var(--ease-out-expo) both;
+}
+
+.agentic-chat-turn.user {
+  justify-self: end;
+  border-color: rgba(127, 167, 255, 0.36);
+  background: rgba(127, 167, 255, 0.12);
+}
+
+.agentic-chat-turn.assistant {
+  justify-self: start;
+  border-color: rgba(183, 240, 106, 0.3);
+}
+
+.agentic-chat-turn.thinking {
+  opacity: 0.78;
+}
+
+.agentic-chat-turn > div {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.agentic-chat-turn span,
+.agentic-chat-turn small,
+.agentic-chat-turn em {
+  color: var(--agentic-muted);
+  font-size: 10px;
+  font-style: normal;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.agentic-chat-turn p {
+  margin: 0;
+  color: var(--agentic-text);
+  font-size: 12px;
+  line-height: 1.42;
+  overflow-wrap: anywhere;
+}
+
+.agentic-chat-turn em {
+  display: block;
+  color: rgba(183, 240, 106, 0.76);
+  line-height: 1.35;
+  text-transform: none;
+}
+
+.agentic-chat-empty {
+  display: grid;
+  place-items: center;
+  min-height: 180px;
+  color: var(--agentic-muted);
+  text-align: center;
+}
+
+.agentic-chat-empty p {
+  max-width: 260px;
+  margin: 9px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.chat-compose {
+  padding-top: 2px;
+}
+
+.compact-list {
+  max-height: 228px;
+  overflow: auto;
+  padding-right: 2px;
 }
 
 .compact textarea,
@@ -1962,6 +2138,84 @@ pre {
 .agentic-start {
   position: relative;
   overflow: hidden;
+}
+
+.agentic-shell:not(.engaged) .agentic-start {
+  min-height: calc(100vh - 36px);
+  padding: 0 clamp(18px, 5vw, 70px);
+  width: 100%;
+}
+
+.initial-compose {
+  justify-self: center;
+  width: min(760px, 100%);
+  transform-origin: center center;
+  animation: initial-compose-enter 580ms var(--ease-out-expo) both;
+  will-change: transform, opacity;
+}
+
+.initial-compose textarea {
+  min-height: 88px;
+}
+
+.agentic-shell.transitioning .initial-compose {
+  pointer-events: none;
+  animation: initial-compose-exit 260ms cubic-bezier(0.55, 0.06, 0.68, 0.19) both;
+}
+
+@keyframes initial-compose-enter {
+  from {
+    opacity: 0;
+    transform: translateY(16px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes initial-compose-exit {
+  to {
+    opacity: 0;
+    transform: translateY(-18px) scale(0.96);
+  }
+}
+
+@keyframes split-layout-enter {
+  from {
+    opacity: 0;
+    transform: translateY(18px) scale(0.985);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+@keyframes topbar-enter {
+  from {
+    opacity: 0;
+    transform: translateY(-10px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes assistant-panel-enter {
+  from {
+    opacity: 0;
+    transform: translateX(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 .agentic-orbit {
@@ -3270,6 +3524,717 @@ pre {
     var(--ui-soft);
 }
 
+.pension-lab {
+  width: min(1420px, 100%);
+  border: 1px solid var(--agentic-line);
+  border-radius: 8px;
+  padding: clamp(16px, 2.2vw, 24px);
+  background: rgba(24, 32, 29, 0.78);
+  box-shadow: 0 22px 70px rgba(0, 0, 0, 0.22);
+}
+
+.pension-lab-head,
+.pension-workspace-head,
+.pension-section-head,
+.pension-panel-title {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+}
+
+.pension-lab-head span,
+.pension-workspace-head span,
+.pension-member-strip span,
+.pension-section-head span,
+.pension-route-grid span,
+.pension-impact-grid span,
+.pension-intent-card dt,
+.pension-plan-stats span,
+.pension-panel-title span {
+  color: var(--agentic-muted);
+  font-size: 10px;
+  font-weight: 850;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.pension-lab-head h2 {
+  max-width: 760px;
+  margin: 5px 0 0;
+  color: var(--agentic-text);
+  font-size: clamp(25px, 3.2vw, 46px);
+  line-height: 1.02;
+}
+
+.pension-lab-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid rgba(183, 240, 106, 0.32);
+  border-radius: 8px;
+  padding: 9px 11px;
+  color: var(--agentic-green);
+  background: rgba(183, 240, 106, 0.08);
+  font-size: 12px;
+  font-weight: 850;
+  text-decoration: none;
+}
+
+.pension-lab-switcher {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 18px 0;
+}
+
+.pension-lab-switcher button {
+  min-height: 92px;
+  border: 1px solid var(--agentic-line);
+  border-radius: 8px;
+  padding: 14px;
+  color: var(--agentic-text);
+  background: rgba(255, 255, 255, 0.045);
+  text-align: left;
+  cursor: pointer;
+  transition: transform 180ms var(--ease-out-expo), border-color 180ms var(--ease-out-expo), background 180ms var(--ease-out-expo);
+}
+
+.pension-lab-switcher button:hover,
+.pension-lab-switcher button.active {
+  border-color: rgba(183, 240, 106, 0.56);
+  background: rgba(183, 240, 106, 0.1);
+  transform: translateY(-1px);
+}
+
+.pension-lab-switcher strong,
+.pension-lab-switcher span {
+  display: block;
+}
+
+.pension-lab-switcher strong {
+  font-size: 16px;
+}
+
+.pension-lab-switcher span {
+  margin-top: 8px;
+  color: var(--agentic-muted);
+  font-size: 13px;
+  line-height: 1.45;
+}
+
+.pension-lab-grid {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.72fr) minmax(0, 1.35fr) minmax(260px, 0.88fr);
+  gap: 12px;
+  align-items: start;
+}
+
+.pension-intent-card,
+.pension-workspace,
+.pension-plan-card {
+  border: 1px solid var(--agentic-line);
+  border-radius: 8px;
+  background: rgba(16, 22, 21, 0.62);
+}
+
+.pension-intent-card,
+.pension-plan-card,
+.pension-workspace {
+  padding: 14px;
+}
+
+.pension-panel-title {
+  justify-content: flex-start;
+  color: var(--agentic-green);
+}
+
+.pension-intent-card blockquote {
+  margin: 16px 0;
+  border-left: 3px solid var(--agentic-green);
+  padding: 2px 0 2px 12px;
+  color: var(--agentic-text);
+  font-size: 18px;
+  line-height: 1.28;
+}
+
+.pension-intent-card dl {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+}
+
+.pension-intent-card dd {
+  margin: 4px 0 0;
+  color: var(--agentic-text);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.pension-workspace-head {
+  border-bottom: 1px solid var(--agentic-line);
+  padding-bottom: 14px;
+}
+
+.pension-workspace-head h3 {
+  margin: 4px 0 0;
+  color: var(--agentic-text);
+  font-size: clamp(22px, 2.4vw, 32px);
+  line-height: 1.08;
+}
+
+.pension-workspace-head strong {
+  border: 1px solid rgba(183, 240, 106, 0.32);
+  border-radius: 999px;
+  padding: 7px 10px;
+  color: var(--agentic-green);
+  background: rgba(183, 240, 106, 0.08);
+  font-size: 12px;
+}
+
+.pension-member-strip {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin: 14px 0;
+}
+
+.pension-member-strip article,
+.pension-route-grid article,
+.pension-route-grid button,
+.pension-impact-grid article,
+.pension-plan-stats div,
+.pension-stage-list li {
+  border: 1px solid var(--agentic-line);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.045);
+}
+
+.pension-member-strip article {
+  padding: 11px;
+}
+
+.pension-member-strip strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--agentic-text);
+  font-size: 15px;
+}
+
+.pension-business-section {
+  border-top: 1px solid var(--agentic-line);
+  margin-top: 15px;
+  padding-top: 15px;
+}
+
+.pension-outcome-card {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 0.34fr);
+  gap: 16px;
+  align-items: center;
+  border: 1px solid rgba(183, 240, 106, 0.34);
+  border-radius: 10px;
+  padding: 18px;
+  background:
+    linear-gradient(135deg, rgba(183, 240, 106, 0.15), rgba(94, 161, 255, 0.08)),
+    rgba(255, 255, 255, 0.035);
+}
+
+.pension-outcome-card span,
+.pension-readiness-grid span {
+  color: var(--agentic-muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.pension-outcome-card h3 {
+  margin: 5px 0 8px;
+  color: var(--agentic-text);
+  font-size: clamp(24px, 4vw, 38px);
+  line-height: 1;
+}
+
+.pension-outcome-card p,
+.pension-readiness-grid p {
+  margin: 0;
+  color: var(--agentic-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pension-outcome-amount {
+  display: grid;
+  gap: 4px;
+  border-left: 1px solid rgba(255, 255, 255, 0.14);
+  padding-left: 16px;
+}
+
+.pension-outcome-amount strong {
+  color: var(--agentic-green);
+  font-size: 27px;
+  line-height: 1.05;
+}
+
+.pension-outcome-amount small {
+  color: var(--agentic-muted);
+  font-size: 12px;
+}
+
+.pension-section-head svg {
+  color: var(--agentic-blue);
+}
+
+.pension-section-head h4 {
+  margin: 4px 0 0;
+  color: var(--agentic-text);
+  font-size: 19px;
+  line-height: 1.16;
+}
+
+.pension-route-grid,
+.pension-impact-grid,
+.pension-readiness-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 13px;
+}
+
+.pension-impact-grid,
+.pension-readiness-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pension-route-grid article,
+.pension-route-grid button,
+.pension-impact-grid article,
+.pension-readiness-grid article {
+  padding: 13px;
+}
+
+.pension-route-grid button {
+  color: var(--agentic-text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pension-route-grid article.ready,
+.pension-route-grid button.ready {
+  border-color: rgba(183, 240, 106, 0.38);
+  background: rgba(183, 240, 106, 0.08);
+}
+
+.pension-route-grid button.selected,
+.pension-action-grid button.selected,
+.pension-timeline button.selected {
+  outline: 2px solid rgba(183, 240, 106, 0.62);
+  outline-offset: -2px;
+}
+
+.pension-route-grid strong,
+.pension-impact-grid strong,
+.pension-readiness-grid strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--agentic-text);
+  font-size: 17px;
+}
+
+.pension-route-grid p {
+  margin: 8px 0 0;
+  color: var(--agentic-muted);
+  font-size: 13px;
+  line-height: 1.4;
+}
+
+.pension-selected-note,
+.pension-section-note {
+  margin-top: 12px;
+  color: var(--agentic-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.pension-selected-note {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 4px;
+  border: 1px solid rgba(183, 240, 106, 0.2);
+  border-radius: 8px;
+  padding: 11px 12px;
+  background: rgba(183, 240, 106, 0.05);
+}
+
+.pension-selected-note strong {
+  color: var(--agentic-text);
+  font-size: 14px;
+}
+
+.pension-selected-note span {
+  display: block;
+  margin-top: 4px;
+}
+
+.pension-selected-note button {
+  border: 0;
+  border-radius: 999px;
+  padding: 9px 13px;
+  color: #10170f;
+  background: var(--agentic-green);
+  font-size: 12px;
+  font-weight: 850;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.pension-limit-block {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  gap: 12px;
+  align-items: start;
+  border: 1px solid rgba(241, 184, 75, 0.48);
+  border-radius: 10px;
+  margin-top: 14px;
+  padding: 14px;
+  color: var(--agentic-text);
+  background: rgba(241, 184, 75, 0.09);
+}
+
+.pension-limit-block svg {
+  color: rgb(241, 184, 75);
+}
+
+.pension-limit-block strong {
+  display: block;
+  font-size: 16px;
+}
+
+.pension-limit-block p {
+  margin: 6px 0 0;
+  color: var(--agentic-muted);
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.customer-progress p {
+  display: none;
+}
+
+.pension-timeline {
+  display: grid;
+  gap: 10px;
+  margin-top: 13px;
+}
+
+.pension-timeline article,
+.pension-timeline button {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.32fr) minmax(160px, 1fr);
+  gap: 12px;
+  align-items: center;
+}
+
+.pension-timeline button {
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.13);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--agentic-text);
+  background: rgba(255, 255, 255, 0.04);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pension-timeline strong,
+.pension-timeline span {
+  display: block;
+}
+
+.pension-timeline strong {
+  color: var(--agentic-text);
+  font-size: 16px;
+}
+
+.pension-timeline div > span {
+  margin-top: 3px;
+  color: var(--agentic-muted);
+  font-size: 12px;
+}
+
+.pension-timeline-bar {
+  height: 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.09);
+  overflow: hidden;
+}
+
+.pension-timeline-bar span {
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--agentic-blue), var(--agentic-green));
+}
+
+.pension-action-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+  margin-top: 13px;
+}
+
+.pension-action-grid button {
+  display: grid;
+  gap: 6px;
+  min-height: 104px;
+  border: 1px solid rgba(183, 240, 106, 0.36);
+  border-radius: 8px;
+  padding: 13px;
+  color: var(--agentic-text);
+  background: rgba(183, 240, 106, 0.08);
+  text-align: left;
+}
+
+.pension-action-grid button.gated {
+  border-color: rgba(241, 184, 75, 0.42);
+  background: rgba(241, 184, 75, 0.08);
+}
+
+.pension-action-grid span {
+  color: var(--agentic-muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.pension-action-grid strong {
+  font-size: 15px;
+}
+
+.pension-action-grid small {
+  color: var(--agentic-muted);
+  font-size: 12px;
+  line-height: 1.4;
+}
+
+.pension-flow-panel {
+  display: grid;
+  gap: 13px;
+  margin-top: 14px;
+  border: 1px solid rgba(94, 161, 255, 0.26);
+  border-radius: 10px;
+  padding: 15px;
+  background: rgba(94, 161, 255, 0.055);
+}
+
+.pension-flow-panel.blocked {
+  border-color: rgba(241, 184, 75, 0.48);
+  background: rgba(241, 184, 75, 0.08);
+}
+
+.pension-flow-panel span {
+  color: var(--agentic-muted);
+  font-size: 10px;
+  font-weight: 850;
+  text-transform: uppercase;
+}
+
+.pension-flow-panel h4 {
+  margin: 4px 0 0;
+  color: var(--agentic-text);
+  font-size: 18px;
+}
+
+.pension-option-compare {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.pension-option-compare article,
+.pension-option-compare button {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  color: var(--agentic-text);
+  background: rgba(255, 255, 255, 0.035);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pension-option-compare strong {
+  display: block;
+  margin-top: 5px;
+  color: var(--agentic-text);
+  font-size: 16px;
+}
+
+.pension-option-compare p {
+  margin: 7px 0 0;
+  color: var(--agentic-muted);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.pension-application-flow {
+  display: grid;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pension-application-flow.compact {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.pension-application-flow li {
+  position: relative;
+  min-height: 92px;
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 12px;
+  background: rgba(255, 255, 255, 0.035);
+}
+
+.pension-application-flow li > button {
+  width: 100%;
+  height: 100%;
+  border: 0;
+  padding: 0;
+  color: inherit;
+  background: transparent;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pension-application-flow li.done {
+  border-color: rgba(183, 240, 106, 0.34);
+  background: rgba(183, 240, 106, 0.07);
+}
+
+.pension-application-flow li.current {
+  border-color: rgba(241, 184, 75, 0.44);
+  background: rgba(241, 184, 75, 0.08);
+}
+
+.pension-application-flow strong {
+  display: block;
+  color: var(--agentic-text);
+  font-size: 14px;
+}
+
+.pension-application-flow span {
+  display: block;
+  margin-top: 7px;
+  color: var(--agentic-muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.42;
+  text-transform: none;
+}
+
+.pension-flow-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+
+.pension-flow-actions button {
+  border: 0;
+  border-radius: 999px;
+  padding: 10px 16px;
+  color: #10170f;
+  background: var(--agentic-green);
+  font-weight: 850;
+  cursor: pointer;
+}
+
+.pension-submit-result {
+  color: var(--agentic-green);
+  font-size: 15px;
+}
+
+.pension-plan-stats {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin: 14px 0;
+}
+
+.pension-plan-stats div {
+  padding: 10px;
+}
+
+.pension-plan-stats strong {
+  display: block;
+  margin-top: 4px;
+  color: var(--agentic-text);
+  font-size: 20px;
+}
+
+.pension-stage-list {
+  display: grid;
+  gap: 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pension-stage-list li {
+  display: grid;
+  grid-template-columns: 28px minmax(0, 1fr);
+  gap: 10px;
+  padding: 10px;
+}
+
+.pension-stage-list li.target {
+  border-color: rgba(183, 240, 106, 0.38);
+  background: rgba(183, 240, 106, 0.08);
+}
+
+.pension-stage-list li > span {
+  display: grid;
+  place-items: center;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  color: var(--agentic-ink);
+  background: var(--agentic-blue);
+  font-size: 12px;
+  font-weight: 900;
+}
+
+.pension-stage-list li.target > span {
+  background: var(--agentic-green);
+}
+
+.pension-stage-list strong,
+.pension-stage-list p,
+.pension-stage-list small {
+  display: block;
+}
+
+.pension-stage-list strong {
+  color: var(--agentic-text);
+  font-size: 13px;
+}
+
+.pension-stage-list p {
+  margin: 4px 0 5px;
+  color: var(--agentic-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.pension-stage-list small {
+  color: var(--agentic-green);
+  font-size: 11px;
+  font-weight: 850;
+}
+
 .agentic-ui-topbar,
 .agentic-ui-hero,
 .agentic-ui-layout {
@@ -3721,7 +4686,8 @@ pre {
   .agentic-layout,
   .a2ui-surface,
   .agentic-ui-hero,
-  .agentic-ui-layout {
+  .agentic-ui-layout,
+  .pension-lab-grid {
     grid-template-columns: 1fr;
   }
 
@@ -3769,6 +4735,11 @@ pre {
 
   .agentic-ui-layout {
     align-items: stretch;
+  }
+
+  .pension-lab-head {
+    align-items: start;
+    flex-direction: column;
   }
 
 }
@@ -3899,6 +4870,19 @@ pre {
   }
 
   .agentic-ui-intent-switcher,
+  .pension-lab-switcher,
+  .pension-member-strip,
+  .pension-outcome-card,
+  .pension-selected-note,
+  .pension-route-grid,
+  .pension-impact-grid,
+  .pension-readiness-grid,
+  .pension-action-grid,
+  .pension-timeline article,
+  .pension-timeline button,
+  .pension-option-compare,
+  .pension-application-flow,
+  .pension-application-flow.compact,
   .agentic-ui-member-strip,
   .agentic-ui-route-grid,
   .agentic-ui-impact-grid,
@@ -3910,6 +4894,13 @@ pre {
 
   .agentic-ui-composition-row em {
     text-align: left;
+  }
+
+  .pension-outcome-amount {
+    border-top: 1px solid rgba(255, 255, 255, 0.14);
+    border-left: 0;
+    padding-top: 12px;
+    padding-left: 0;
   }
 }
 

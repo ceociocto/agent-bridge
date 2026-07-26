@@ -13,6 +13,7 @@ import { getCapabilityPackage, type InputContractField, type InputExtractor } fr
 import {
   composeAdviserModelPortfolioReview,
   composeIsaAllowanceReview,
+  composeRetirementPensionTaskOrchestration,
   composeSippDrawdownPathwayReview,
   composeWorkplacePensionContributionGuidance
 } from "./composers.js";
@@ -33,6 +34,14 @@ const port = Number(process.env.PORT ?? 4100);
 
 app.use(cors());
 app.use(express.json());
+
+function extractLatestUserRequest(prompt: string) {
+  const marker = "Latest user request:";
+  const index = prompt.lastIndexOf(marker);
+  if (index < 0) return prompt;
+  const latest = prompt.slice(index + marker.length).trim();
+  return latest || prompt;
+}
 
 app.get("/", (_req, res) => {
   res.json({
@@ -150,21 +159,22 @@ app.post("/agent/request", async (req, res, next) => {
       res.status(400).json({ error: "prompt is required" });
       return;
     }
+    const routingPrompt = extractLatestUserRequest(prompt);
 
-    const scopeDecision = evaluateCustomerScope(prompt, String(req.body?.customerId ?? ""));
+    const scopeDecision = evaluateCustomerScope(routingPrompt, String(req.body?.customerId ?? ""));
     if (scopeDecision) {
       res.json({
-        prompt,
+        prompt: routingPrompt,
         resolution: scopeDecision
       });
       return;
     }
 
-    const resolution = await resolveIntent(prompt);
+    const resolution = await resolveIntent(routingPrompt);
 
     if (resolution.status !== "resolved" || !resolution.capabilityId) {
       res.json({
-        prompt,
+        prompt: routingPrompt,
         resolution
       });
       return;
@@ -187,7 +197,7 @@ app.post("/agent/request", async (req, res, next) => {
     const result = await composeCapability(capability, parsed.data);
 
     res.json({
-      prompt,
+      prompt: routingPrompt,
       resolution,
       capability,
       result
@@ -204,6 +214,7 @@ app.post("/agui/runs", async (req, res, next) => {
       res.status(400).json({ error: "prompt is required" });
       return;
     }
+    const routingPrompt = extractLatestUserRequest(prompt);
 
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -236,10 +247,10 @@ app.post("/agui/runs", async (req, res, next) => {
       runId
     });
 
-    const scopeDecision = evaluateCustomerScope(prompt, String(req.body?.customerId ?? ""));
+    const scopeDecision = evaluateCustomerScope(routingPrompt, String(req.body?.customerId ?? ""));
     if (scopeDecision) {
       const response = {
-        prompt,
+        prompt: routingPrompt,
         resolution: scopeDecision
       };
       writeAguiEvent(res, {
@@ -277,7 +288,7 @@ app.post("/agui/runs", async (req, res, next) => {
       status: "running",
       runId
     });
-    const resolution = await resolveIntent(prompt);
+    const resolution = await resolveIntent(routingPrompt);
     writeAguiEvent(res, {
       type: "STATE_DELTA",
       label: "Capability match",
@@ -292,7 +303,7 @@ app.post("/agui/runs", async (req, res, next) => {
 
     if (resolution.status !== "resolved" || !resolution.capabilityId) {
       const response = {
-        prompt,
+        prompt: routingPrompt,
         resolution
       };
       writeAguiEvent(res, {
@@ -359,7 +370,7 @@ app.post("/agui/runs", async (req, res, next) => {
         })
       : undefined;
     const response = {
-      prompt,
+      prompt: routingPrompt,
       resolution,
       capability,
       result,
@@ -445,6 +456,8 @@ async function composeCapability(capability: NonNullable<ReturnType<typeof getCa
       return composeWorkplacePensionContributionGuidance(capability, input);
     case "adviser_platform_model_portfolio_review":
       return composeAdviserModelPortfolioReview(capability, input);
+    case "retirement_pension_task_orchestration":
+      return composeRetirementPensionTaskOrchestration(capability, input);
   }
 }
 
@@ -497,11 +510,43 @@ function extractRetirementAge(prompt: string) {
 function extractMoneyAfter(prompt: string, keywords: string[]) {
   const lower = prompt.toLowerCase();
   if (!keywords.some((keyword) => lower.includes(keyword))) return undefined;
-  const match = prompt.match(/£\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?|\b(\d{4,6})\b/);
-  const raw = match?.[1] ?? match?.[2];
+  const matches = [...prompt.matchAll(
+    /[£¥]\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?|(\d+(?:\.\d+)?)\s*(?:万|萬元|万元)|([一二两三四五六七八九十]+)\s*(?:万|萬元|万元)|\b(\d{4,7})\b/g
+  )];
+  const match = matches.at(-1);
+  const chineseWan = match?.[3];
+  if (chineseWan) {
+    const value = parseSmallChineseNumber(chineseWan);
+    return Number.isFinite(value) ? value * 10000 : undefined;
+  }
+  const raw = match?.[1] ?? match?.[2] ?? match?.[4];
   if (!raw) return undefined;
   const value = Number(raw.replaceAll(",", ""));
+  if (match?.[2]) return Number.isFinite(value) ? value * 10000 : undefined;
   return Number.isFinite(value) ? value : undefined;
+}
+
+function parseSmallChineseNumber(value: string) {
+  const digits: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+  if (value === "十") return 10;
+  if (value.includes("十")) {
+    const [tensRaw, onesRaw] = value.split("十");
+    const tens = tensRaw ? digits[tensRaw] ?? 0 : 1;
+    const ones = onesRaw ? digits[onesRaw] ?? 0 : 0;
+    return tens * 10 + ones;
+  }
+  return digits[value] ?? Number.NaN;
 }
 
 function extractDrawdownGoal(prompt: string) {
@@ -519,6 +564,20 @@ function extractRiskProfile(prompt: string) {
   if (lower.includes("growth")) return "growth" as const;
   if (lower.includes("cautious")) return "cautious" as const;
   if (lower.includes("balanced")) return "balanced" as const;
+  return undefined;
+}
+
+function extractPensionTaskIntent(prompt: string) {
+  const lower = prompt.toLowerCase();
+  if (/(?:公积金|住房公积金|缺钱|提取|取一部分|拿出来|还房贷|withdraw|cash access)/iu.test(lower)) {
+    return "cash_access_exploration" as const;
+  }
+  if (/(?:准备退休|什么时候退休|怎样领取|领取养老金|退休最合适|claim|retirement planning)/iu.test(lower)) {
+    return "retirement_claim_planning" as const;
+  }
+  if (/(?:比例|组成|构成|分布|配置|composition|allocation)/iu.test(lower)) {
+    return "pot_composition" as const;
+  }
   return undefined;
 }
 
@@ -560,6 +619,7 @@ const fieldExtractors: Record<InputExtractor["kind"], FieldExtractor> = {
   money_after: (_body, prompt, _fieldName, extractor) =>
     extractor?.kind === "money_after" ? extractMoneyAfter(prompt, extractor.keywords) : undefined,
   drawdown_goal: (_body, prompt) => extractDrawdownGoal(prompt),
+  pension_task_intent: (_body, prompt) => extractPensionTaskIntent(prompt),
   percentage: (_body, prompt) => extractPercentage(prompt),
   retirement_age: (_body, prompt) => extractRetirementAge(prompt),
   risk_profile: (_body, prompt) => extractRiskProfile(prompt)
@@ -568,7 +628,8 @@ const fieldExtractors: Record<InputExtractor["kind"], FieldExtractor> = {
 const workflowCapabilities: Record<MicroWorkflowId, string> = {
   isa_subscription_feasibility: "personal_investing_isa_allowance_review",
   adviser_review_pack_generation: "adviser_platform_model_portfolio_review",
-  retirement_goal_gap_projection: "workplace_pension_contribution_guidance"
+  retirement_goal_gap_projection: "workplace_pension_contribution_guidance",
+  retirement_pension_task_orchestration: "retirement_pension_task_orchestration"
 };
 
 function resolveMicroWorkflowId(body: Record<string, unknown>, result: Record<string, unknown>) {

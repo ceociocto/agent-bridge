@@ -20,6 +20,7 @@ import {
   PanelsTopLeft,
   Play,
   Route,
+  RotateCcw,
   Satellite,
   Search,
   SendHorizontal,
@@ -532,7 +533,12 @@ type A2uiSurface = {
 };
 
 type AgenticWorkflow = {
-  id: string;
+  id:
+    | "isa-top-up-readiness"
+    | "advisor-review-pack"
+    | "retirement-gap"
+    | "pension-cash-access"
+    | "pension-retirement-choice";
   domain: "Personal Investing" | "Workplace Investing";
   audience: "Client" | "Adviser" | "Member";
   label: string;
@@ -547,6 +553,23 @@ type AgenticWorkflow = {
   components: string[];
   narrative: string;
   steps: Array<{ label: string; detail: string }>;
+};
+
+type AgenticChatTurn = {
+  id: string;
+  role: "user" | "assistant";
+  text: string;
+  intent: string;
+  workflowId: string;
+  timestamp: string;
+  status?: AgentResponse["resolution"]["status"];
+};
+
+type PensionFlowState = {
+  stage: "decision" | "purpose" | "compare" | "application" | "identity" | "authorization" | "submitted";
+  selectedAction: string;
+  selectedRouteLabel?: string;
+  routeMaxAmount?: number;
 };
 
 const agenticWorkflows: AgenticWorkflow[] = [
@@ -613,10 +636,285 @@ const agenticWorkflows: AgenticWorkflow[] = [
       { label: "Run projection", detail: "Continue a durable long-running forecast." },
       { label: "Compare plan", detail: "Review the adjusted scenario against the current path." }
     ]
+  },
+  {
+    id: "pension-cash-access",
+    domain: "Workplace Investing",
+    audience: "Member",
+    label: "公积金提取",
+    title: "公积金提取方案",
+    prompt: "我最近手头紧，要提取一些公积金",
+    capabilityId: "retirement_pension_task_orchestration",
+    input: {
+      customerId: "CN001",
+      pensionTaskIntent: "cash_access_exploration",
+      requestedWithdrawalAmount: 100000,
+      microWorkflowId: "retirement_pension_task_orchestration"
+    },
+    pattern: "guided-simulation",
+    microWorkflow: "retirement_pension_task_orchestration",
+    apiPlan: ["会员画像", "公积金账户", "提取资格", "提取路径", "到账测算", "策略审计"],
+    runtime: ["durable", "human-loop"],
+    components: ["目标摘要", "已补全资料", "到账测算", "关键决定"],
+    narrative: "中文场景：围绕用户提取公积金的目标准备方案，不直接进入资金申请。",
+    steps: [
+      { label: "解析意图", detail: "识别用户是在探索资金可得性，而不是直接提交申请。" },
+      { label: "加载上下文", detail: "自动读取账户余额、身份状态、已验证银行卡等已知信息。" },
+      { label: "检查资格", detail: "组装提取资格和可选路径，不让模型自由裁决合规结果。" },
+      { label: "估算影响", detail: "展示税费、到账金额和长期退休收入影响。" }
+    ]
+  },
+  {
+    id: "pension-retirement-choice",
+    domain: "Workplace Investing",
+    audience: "Member",
+    label: "退休规划",
+    title: "退休时间与领取策略",
+    prompt: "我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。",
+    capabilityId: "retirement_pension_task_orchestration",
+    input: {
+      customerId: "CN001",
+      pensionTaskIntent: "retirement_claim_planning",
+      targetRetirementAge: 63,
+      microWorkflowId: "retirement_pension_task_orchestration"
+    },
+    pattern: "guided-simulation",
+    microWorkflow: "retirement_pension_task_orchestration",
+    apiPlan: ["会员画像", "养老金账户", "退休时间线", "领取测算", "策略比较", "策略审计"],
+    runtime: ["long-task", "durable", "human-loop"],
+    components: ["意图摘要", "退休时间线", "领取策略", "方案比较"],
+    narrative: "中文场景：同一养老金能力被组装成规划界面，而不是提取流程。",
+    steps: [
+      { label: "解析意图", detail: "识别用户目标是退休规划和领取策略，而不是养老金提取。" },
+      { label: "加载上下文", detail: "读取养老金账户、年龄、缴费历史和预计退休窗口。" },
+      { label: "生成时间线", detail: "比较不同退休年龄下的收入和现金流。" },
+      { label: "比较领取", detail: "动态展示按月领取、部分一次性领取等策略。" }
+    ]
   }
 ];
 
 const workflowById = new Map(agenticWorkflows.map((workflow) => [workflow.id, workflow]));
+const defaultAgenticWorkflow = workflowById.get("pension-cash-access") ?? agenticWorkflows[0];
+
+function inferWorkflowFromConversation(prompt: string, fallback: AgenticWorkflow) {
+  const normalized = prompt.toLowerCase();
+  const signals = [
+    {
+      workflow: workflowById.get("pension-cash-access") ?? fallback,
+      score: ["缺钱", "手头紧", "公积金", "住房公积金", "取一部分", "提取", "能不能取", "拿出来", "access pension", "withdraw pension"].filter((term) => normalized.includes(term)).length
+    },
+    {
+      workflow: workflowById.get("pension-retirement-choice") ?? fallback,
+      score: ["准备退休", "什么时候退休", "怎样领取", "领取养老金", "退休最合适", "claim strategy"].filter((term) => normalized.includes(term)).length
+    },
+    {
+      workflow: workflowById.get("advisor-review-pack") ?? fallback,
+      score: ["adviser", "advisor", "model portfolio", "portfolio drift", "review pack", "client pack"].filter((term) => normalized.includes(term)).length
+    },
+    {
+      workflow: workflowById.get("retirement-gap") ?? fallback,
+      score: ["retire", "retirement", "pension", "contribution", "goal", "gap", "65", "workplace"].filter((term) => normalized.includes(term)).length
+    },
+    {
+      workflow: workflowById.get("isa-top-up-readiness") ?? fallback,
+      score: ["isa", "stocks and shares", "subscription", "allowance", "top up", "top-up", "tax year"].filter((term) => normalized.includes(term)).length
+    }
+  ].sort((a, b) => b.score - a.score);
+
+  return signals[0]?.score ? { workflow: signals[0].workflow, score: signals[0].score } : null;
+}
+
+function buildCondensedIntent(history: AgenticChatTurn[], question: string, workflow: AgenticWorkflow) {
+  const recentUserTurns = history
+    .filter((turn) => turn.role === "user")
+    .slice(-3)
+    .map((turn) => turn.text);
+  const threadText = [...recentUserTurns, question].join(" ");
+  const contribution = extractContributionRateFromPrompt(threadText);
+  const retirement = extractRetirementAgeFromPrompt(threadText);
+  const fragments = [`${workflow.audience.toLowerCase()} intent: ${workflow.title}`];
+
+  if (workflow.domain === "Workplace Investing") {
+    if (Number.isFinite(retirement)) fragments.push(`retirement age ${retirement}`);
+    if (Number.isFinite(contribution)) fragments.push(`contribution ${contribution}%`);
+  }
+
+  if (workflow.id === "pension-cash-access") {
+    fragments.push("mode 公积金提取准备 · no transaction started");
+  }
+
+  if (workflow.id === "pension-retirement-choice") {
+    fragments.push("mode 规划 · claim not started");
+  }
+
+  if (workflow.id === "isa-top-up-readiness") {
+    const amountMatch = threadText.match(/(?:£|gbp\s*)\s?(\d{1,3}(?:,\d{3})*|\d+)/i);
+    if (amountMatch) fragments.push(`planned ISA amount £${amountMatch[1]}`);
+  }
+
+  return fragments.join(" · ");
+}
+
+function isLocalPensionWorkflow(workflow: AgenticWorkflow) {
+  return false;
+}
+
+function isPensionWorkflow(workflow: AgenticWorkflow) {
+  return workflow.id === "pension-cash-access" || workflow.id === "pension-retirement-choice";
+}
+
+function selectedPensionRouteHint(routeName: string) {
+  if (routeName.includes("住房")) {
+    return {
+      label: "确认住房用途",
+      detail: "系统会继续确认是否用于本人主要住房、是否有未还贷款，以及需要哪些证明。",
+      emphasis: "更适合房贷、租房或主要住房相关资金需求。"
+    };
+  }
+  if (routeName.includes("困难")) {
+    return {
+      label: "补充困难情况",
+      detail: "系统会先确认困难类型和证明材料，再判断是否需要人工审核。",
+      emphasis: "更适合短期收入变化、医疗或生活困难等情况。"
+    };
+  }
+  return {
+    label: "继续确认用途",
+    detail: "系统会根据你的选择继续缩小范围，尚不会提交正式申请。",
+    emphasis: "先判断能不能取，再决定是否进入申请。"
+  };
+}
+
+function parseYuanAmount(value: unknown) {
+  const raw = String(value ?? "").replace(/[¥,\s]/g, "");
+  const amount = Number(raw);
+  return Number.isFinite(amount) ? amount : undefined;
+}
+
+function formatYuanAmount(value: number) {
+  return `¥${Math.round(value).toLocaleString("en-US")}`;
+}
+
+function estimateNetRange(amount: number) {
+  return `${formatYuanAmount(amount * 0.92)} - ${formatYuanAmount(amount * 0.95)}`;
+}
+
+function createLocalPensionAgentResponse(workflow: AgenticWorkflow, prompt: string): AgentResponse {
+  const now = new Date().toISOString();
+  const isCashAccess = workflow.id === "pension-cash-access";
+  const taskPlan = buildPensionTaskPlan(isCashAccess ? pensionIntentScenarios[0] : pensionIntentScenarios[1]);
+  const runSteps = workflow.steps.map((step, index) => ({
+    id: `${workflow.id}-step-${index + 1}`,
+    label: step.label,
+    detail: step.detail,
+    status: index < workflow.steps.length - 1 ? "completed" as const : "requires_action" as const,
+    allowedActions: [] as WorkflowActionType[],
+    uiHint: "scenario_comparison" as WorkflowUiHint,
+    attempts: 1,
+    updatedAt: now
+  }));
+  const summary = isCashAccess
+    ? "已根据“最近缺钱”的模糊需求组装为养老金提取探索工作区：先做资格路径与影响测算，尚未创建任何正式申请。"
+    : "已根据“准备退休”的规划需求组装为退休时间与领取策略工作区：比较退休年龄和领取方式，尚未进入领取申请。";
+  const result: WorkflowRun["result"] = {
+    capability: "workplace_pension_contribution_guidance",
+    summary,
+    source_apis: workflow.apiPlan,
+    audit_trace_id: `local-pension-audit-${workflow.id}`,
+    policy_checks: [
+      { name: "只读探索模式", status: "passed", detail: "本次演示没有提交交易、没有创建申请。" },
+      { name: "受控阶段库", status: "passed", detail: "Task Plan 只从预定义阶段库中补全依赖和组件。" }
+    ],
+    next_actions: [
+      { id: "clarify_next_decision", label: isCashAccess ? "确认提取原因" : "选择偏好的退休年龄" }
+    ],
+    task_plan: taskPlan.map((stage) => ({
+      id: stage.id,
+      title: stage.title,
+      source: stage.source,
+      microWorkflow: stage.microWorkflow,
+      component: stage.component
+    }))
+  };
+
+  return {
+    prompt,
+    resolution: {
+      status: "resolved",
+      intent: isCashAccess ? "access_pension_funds" : "plan_retirement_and_claim_strategy",
+      capabilityId: "workplace_pension_contribution_guidance",
+      confidence: isCashAccess ? 0.93 : 0.91,
+      reasoning: summary,
+      resolver: "rules",
+      policyDecision: { name: "local pension demo", status: "passed", detail: "Synthetic runtime response for dynamic UI assembly." }
+    },
+    result,
+    workflowRun: {
+      id: `local-pension-run-${workflow.id}`,
+      microWorkflowId: "retirement_goal_gap_projection",
+      capabilityId: "workplace_pension_contribution_guidance",
+      status: "waiting_for_human",
+      currentStepIndex: workflow.steps.length - 1,
+      steps: runSteps,
+      input: workflow.input as WorkflowRun["input"],
+      result,
+      auditTraceId: `local-pension-audit-${workflow.id}`,
+      createdAt: now,
+      updatedAt: now,
+      agent: {
+        objective: isCashAccess
+          ? "把模糊的资金需求收敛为可解释的养老金提取探索任务。"
+          : "把退休规划需求收敛为时间线和领取策略比较任务。",
+        currentActivity: isCashAccess ? "动态组装提取探索工作区" : "动态组装退休规划工作区",
+        decisionRationale: "Planner 先选中意图目标阶段，再由阶段库自动补全数据依赖和受控组件。",
+        nextAction: isCashAccess ? "询问提取原因或比较低影响方案。" : "让用户选择要重点比较的退休年龄或领取方式。",
+        needsUser: true,
+        planVersion: 2
+      },
+      observations: [
+        {
+          id: `obs-${workflow.id}`,
+          timestamp: now,
+          kind: "business_result",
+          summary,
+          evidence: { taskPlanSize: taskPlan.length, components: workflow.components }
+        }
+      ],
+      planRevisions: [
+        {
+          id: `rev-${workflow.id}`,
+          timestamp: now,
+          version: 2,
+          reason: "根据中文意图动态选择目标阶段，并自动补全画像与账户加载依赖。",
+          addedStepIds: taskPlan.map((stage) => stage.id),
+          removedStepIds: []
+        }
+      ],
+      events: [
+        {
+          id: `event-${workflow.id}`,
+          timestamp: now,
+          type: "run.created",
+          summary: "Local pension task run assembled from intent.",
+          stepId: runSteps[0]?.id ?? workflow.id
+        }
+      ]
+    }
+  };
+}
+
+function buildConversationPrompt(history: AgenticChatTurn[], question: string, condensedIntent: string) {
+  const compactHistory = history
+    .slice(-6)
+    .map((turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${turn.text}`)
+    .join("\n");
+
+  return [
+    compactHistory ? `Prior conversation:\n${compactHistory}` : "",
+    `Current condensed intent: ${condensedIntent}`,
+    `Latest user request: ${question}`
+  ].filter(Boolean).join("\n\n");
+}
 
 type AgenticUiStageId =
   | "LoadMemberProfile"
@@ -1000,6 +1298,755 @@ function WithdrawalRouteCard() {
   );
 }
 
+type PensionIntentScenarioId = "cash-access" | "retirement-choice";
+
+type PensionIntentStageId =
+  | "ResolveMemberIntent"
+  | "LoadRetirementProfile"
+  | "LoadPensionPortfolio"
+  | "CheckAccessEligibility"
+  | "CompareAccessRoutes"
+  | "EstimateWithdrawalImpact"
+  | "BuildRetirementTimeline"
+  | "SimulateBenefitOptions"
+  | "CompareClaimStrategies"
+  | "ControlledExecutionGate";
+
+type PensionIntentStage = {
+  id: PensionIntentStageId;
+  title: string;
+  kind: "intent" | "data" | "workflow" | "decision" | "gate";
+  dependsOn: PensionIntentStageId[];
+  microWorkflow: string;
+  component: string;
+};
+
+type PensionIntentScenario = {
+  id: PensionIntentScenarioId;
+  label: string;
+  prompt: string;
+  intent: string;
+  mode: "探索" | "规划";
+  goal: string;
+  targetStages: PensionIntentStageId[];
+  workspaceTitle: string;
+  workspaceHint: string;
+};
+
+const pensionStageLibrary: Record<PensionIntentStageId, PensionIntentStage> = {
+  ResolveMemberIntent: {
+    id: "ResolveMemberIntent",
+    title: "解析用户目标",
+    kind: "intent",
+    dependsOn: [],
+    microWorkflow: "intent_resolution",
+    component: "IntentSummary"
+  },
+  LoadRetirementProfile: {
+    id: "LoadRetirementProfile",
+    title: "读取会员画像",
+    kind: "data",
+    dependsOn: ["ResolveMemberIntent"],
+    microWorkflow: "member_context_loading",
+    component: "KnownFacts"
+  },
+  LoadPensionPortfolio: {
+    id: "LoadPensionPortfolio",
+    title: "读取养老金账户",
+    kind: "data",
+    dependsOn: ["LoadRetirementProfile"],
+    microWorkflow: "pension_portfolio_loading",
+    component: "AccountStrip"
+  },
+  CheckAccessEligibility: {
+    id: "CheckAccessEligibility",
+    title: "检查可提取资格",
+    kind: "workflow",
+    dependsOn: ["LoadPensionPortfolio"],
+    microWorkflow: "withdrawal_eligibility_check",
+    component: "EligibilityRoutes"
+  },
+  CompareAccessRoutes: {
+    id: "CompareAccessRoutes",
+    title: "比较提取路径",
+    kind: "decision",
+    dependsOn: ["CheckAccessEligibility"],
+    microWorkflow: "withdrawal_route_comparison",
+    component: "RouteCards"
+  },
+  EstimateWithdrawalImpact: {
+    id: "EstimateWithdrawalImpact",
+    title: "估算提取影响",
+    kind: "workflow",
+    dependsOn: ["CompareAccessRoutes"],
+    microWorkflow: "withdrawal_impact_simulation",
+    component: "ImpactPreview"
+  },
+  BuildRetirementTimeline: {
+    id: "BuildRetirementTimeline",
+    title: "生成退休时间线",
+    kind: "workflow",
+    dependsOn: ["LoadPensionPortfolio"],
+    microWorkflow: "retirement_timeline_projection",
+    component: "Timeline"
+  },
+  SimulateBenefitOptions: {
+    id: "SimulateBenefitOptions",
+    title: "测算领取方案",
+    kind: "workflow",
+    dependsOn: ["BuildRetirementTimeline"],
+    microWorkflow: "benefit_option_simulation",
+    component: "BenefitComparison"
+  },
+  CompareClaimStrategies: {
+    id: "CompareClaimStrategies",
+    title: "比较领取策略",
+    kind: "decision",
+    dependsOn: ["SimulateBenefitOptions"],
+    microWorkflow: "claim_strategy_comparison",
+    component: "StrategyMatrix"
+  },
+  ControlledExecutionGate: {
+    id: "ControlledExecutionGate",
+    title: "受控办理入口",
+    kind: "gate",
+    dependsOn: ["EstimateWithdrawalImpact", "CompareClaimStrategies"],
+    microWorkflow: "controlled_application_gate",
+    component: "AuthorizationGate"
+  }
+};
+
+const pensionIntentScenarios: PensionIntentScenario[] = [
+  {
+    id: "cash-access",
+    label: "最近缺钱",
+    prompt: "我最近手头紧，要提取一些公积金",
+    intent: "access_pension_funds",
+    mode: "探索",
+    goal: "先判断能否取、预计到账多少、还需要哪些关键决定，不立即创建申请。",
+    targetStages: ["CheckAccessEligibility", "CompareAccessRoutes", "EstimateWithdrawalImpact"],
+    workspaceTitle: "公积金提取方案工作区",
+    workspaceHint: "系统已围绕提取目标准备方案，未进入正式资金申请"
+  },
+  {
+    id: "retirement-choice",
+    label: "准备退休",
+    prompt: "我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。",
+    intent: "plan_retirement_and_claim_strategy",
+    mode: "规划",
+    goal: "比较退休时间、月度领取和一次性领取等方案，只有用户明确办理时才进入申请。",
+    targetStages: ["BuildRetirementTimeline", "SimulateBenefitOptions", "CompareClaimStrategies"],
+    workspaceTitle: "退休规划与领取策略工作区",
+    workspaceHint: "当前是规划模式，输出方案比较而不是固定申请表"
+  }
+];
+
+function buildPensionTaskPlan(scenario: PensionIntentScenario) {
+  const targetStageSet = new Set<PensionIntentStageId>(scenario.targetStages);
+  const included = new Set<PensionIntentStageId>();
+  const ordered: PensionIntentStageId[] = [];
+
+  function include(stageId: PensionIntentStageId) {
+    if (included.has(stageId)) return;
+    const stage = pensionStageLibrary[stageId];
+    stage.dependsOn.forEach(include);
+    included.add(stageId);
+    ordered.push(stageId);
+  }
+
+  scenario.targetStages.forEach(include);
+
+  return ordered.map((stage) => ({
+    ...pensionStageLibrary[stage],
+    source: targetStageSet.has(stage) ? "意图目标" : "自动依赖"
+  }));
+}
+
+function ChinesePensionIntentLab() {
+  const [scenarioId, setScenarioId] = useState<PensionIntentScenarioId>("cash-access");
+  const scenario = pensionIntentScenarios.find((item) => item.id === scenarioId) ?? pensionIntentScenarios[0];
+  const taskPlan = buildPensionTaskPlan(scenario);
+  const intentTargets = taskPlan.filter((stage) => stage.source === "意图目标").length;
+  const dependencies = taskPlan.length - intentTargets;
+
+  return (
+    <section className="pension-lab" aria-label="中文养老金 Agentic Web 演示">
+      <div className="pension-lab-head">
+        <div>
+          <span>Retirement Capability</span>
+          <h2>同一套养老金能力，按意图动态组装界面和流程</h2>
+        </div>
+        <a href="/agentic-ui" className="pension-lab-link">
+          <Route size={16} />
+          <span>查看英文原型</span>
+        </a>
+      </div>
+
+      <div className="pension-lab-switcher">
+        {pensionIntentScenarios.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            className={item.id === scenario.id ? "active" : ""}
+            onClick={() => setScenarioId(item.id)}
+          >
+            <strong>{item.label}</strong>
+            <span>{item.prompt}</span>
+          </button>
+        ))}
+      </div>
+
+      <div className="pension-lab-grid">
+        <aside className="pension-intent-card">
+          <div className="pension-panel-title">
+            <BrainCircuit size={17} />
+            <span>意图解析</span>
+          </div>
+          <blockquote>{scenario.prompt}</blockquote>
+          <dl>
+            <div>
+              <dt>业务意图</dt>
+              <dd>{scenario.intent}</dd>
+            </div>
+            <div>
+              <dt>任务模式</dt>
+              <dd>{scenario.mode}</dd>
+            </div>
+            <div>
+              <dt>目标解释</dt>
+              <dd>{scenario.goal}</dd>
+            </div>
+          </dl>
+        </aside>
+
+        <section className="pension-workspace" aria-live="polite">
+          <div className="pension-workspace-head">
+            <div>
+              <span>{scenario.workspaceHint}</span>
+              <h3>{scenario.workspaceTitle}</h3>
+            </div>
+            <strong>动态渲染</strong>
+          </div>
+
+          <div className="pension-member-strip">
+            <article>
+              <span>客户</span>
+              <strong>陈女士</strong>
+            </article>
+            <article>
+              <span>养老金余额</span>
+              <strong>¥680,000</strong>
+            </article>
+            <article>
+              <span>系统已知</span>
+              <strong>年龄 / 账户 / 身份</strong>
+            </article>
+          </div>
+
+          {scenario.id === "cash-access" ? <PensionCashAccessWorkspace /> : <PensionRetirementChoiceWorkspace />}
+        </section>
+
+        <aside className="pension-plan-card">
+          <div className="pension-panel-title">
+            <GitBranch size={17} />
+            <span>Task Plan</span>
+          </div>
+          <div className="pension-plan-stats">
+            <div>
+              <span>意图命中</span>
+              <strong>{intentTargets}</strong>
+            </div>
+            <div>
+              <span>自动补全</span>
+              <strong>{dependencies}</strong>
+            </div>
+          </div>
+          <ol className="pension-stage-list">
+            {taskPlan.map((stage, index) => (
+              <li key={stage.id} className={stage.source === "意图目标" ? "target" : ""}>
+                <span>{index + 1}</span>
+                <div>
+                  <strong>{stage.title}</strong>
+                  <p>{stage.microWorkflow}</p>
+                  <small>{stage.source} · {stage.component}</small>
+                </div>
+              </li>
+            ))}
+          </ol>
+        </aside>
+      </div>
+    </section>
+  );
+}
+
+function PensionCashAccessWorkspace({
+  result = {},
+  setFlowState
+}: {
+  result?: Record<string, unknown>;
+  setFlowState?: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+}) {
+  const eligibility = result.withdrawal_eligibility as Record<string, unknown> | undefined;
+  const impact = result.withdrawal_impact as Record<string, unknown> | undefined;
+  const limitCheck = result.limit_check as Record<string, unknown> | undefined;
+  const member = result.member_context as Record<string, unknown> | undefined;
+  const portfolio = result.pension_portfolio as Record<string, unknown> | undefined;
+  const routes = Array.isArray(eligibility?.routes) ? eligibility.routes as Array<Record<string, unknown>> : [];
+  const routeOptions = routes.length ? routes : [
+    { label: "住房公积金提取", maximum_amount: "¥120,000", required_evidence: ["主要住房声明", "贷款余额证明"], manual_review_required: false },
+    { label: "困难救济提取", maximum_amount: "¥50,000", required_evidence: ["经济困难证明", "收入变化说明"], manual_review_required: true }
+  ];
+  const [selectedRoute, setSelectedRoute] = useState(String(routeOptions[0]?.label ?? ""));
+  const selectedRouteRecord = routeOptions.find((route) => String(route.label) === selectedRoute) ?? routeOptions[0];
+  const routeHint = selectedPensionRouteHint(selectedRoute);
+  const blockedByLimit = limitCheck?.status === "blocked";
+  const requestedAmountValue = parseYuanAmount(impact?.requested_amount) ?? 100000;
+  const routeMaxAmount = parseYuanAmount(selectedRouteRecord?.maximum_amount);
+  const amountCappedByRoute = Number.isFinite(routeMaxAmount) && requestedAmountValue > Number(routeMaxAmount);
+  const effectiveAmountValue = blockedByLimit
+    ? requestedAmountValue
+    : amountCappedByRoute
+      ? Number(routeMaxAmount)
+      : requestedAmountValue;
+  const requestedAmount = formatYuanAmount(effectiveAmountValue);
+  const originalRequestedAmount = formatYuanAmount(requestedAmountValue);
+  const estimatedNet = amountCappedByRoute
+    ? estimateNetRange(effectiveAmountValue)
+    : String(impact?.estimated_net ?? "¥92,000 - ¥95,000");
+  return (
+    <>
+      <section className="pension-outcome-card">
+        <div>
+          <span>你的目标</span>
+          <h3>从公积金账户提取 {requestedAmount}</h3>
+          <p>{blockedByLimit ? "系统已经替你检查可行路径，但目标金额超过当前政策上限，不能继续提交申请。" : "系统已经替你读取账户、匹配可行路径并完成到账估算。现在还没有提交申请。"}</p>
+        </div>
+        <div className="pension-outcome-amount">
+          <span>{blockedByLimit ? "当前状态" : "预计到账"}</span>
+          <strong>{blockedByLimit ? "无法继续" : estimatedNet}</strong>
+          <small>{blockedByLimit ? `最高可申请 ${String(limitCheck?.maximum_supported_amount ?? "¥120,000")}` : "收款账户：已验证"}</small>
+        </div>
+      </section>
+
+      {blockedByLimit ? (
+        <section className="pension-limit-block">
+          <ShieldAlert size={20} />
+          <div>
+            <strong>目标金额超过所有可行路径上限</strong>
+            <p>
+              你输入的是 {String(limitCheck?.requested_amount ?? originalRequestedAmount)}，
+              当前最高可申请 {String(limitCheck?.maximum_supported_amount ?? "¥120,000")}。
+              请在右侧把金额改到上限以内，或先查看可行路径。
+            </p>
+          </div>
+        </section>
+      ) : null}
+
+      <section className="pension-business-section">
+        <div className="pension-section-head">
+          <div>
+            <span>系统已为你准备好</span>
+            <h4>不用重新找入口、查规则、填重复资料</h4>
+          </div>
+          <ShieldCheck size={19} />
+        </div>
+        <div className="pension-readiness-grid">
+          <article>
+            <span>账户余额</span>
+            <strong>{String(portfolio?.total_balance ?? "¥680,000")}</strong>
+            <p>已自动读取，不再询问账户信息。</p>
+          </article>
+          <article>
+            <span>身份状态</span>
+            <strong>{member?.identity_status === "verified" ? "已验证" : "待验证"}</strong>
+            <p>正式提交前仍会进行强身份确认。</p>
+          </article>
+          <article>
+            <span>可行路径</span>
+            <strong>{routeOptions.length} 个</strong>
+            <p>系统只保留与你目标相关的路径。</p>
+          </article>
+        </div>
+      </section>
+
+      <section className="pension-business-section">
+        <div className="pension-section-head">
+          <div>
+            <span>需要你亲自判断</span>
+            <h4>选择真实用途，系统会据此裁剪后续流程</h4>
+          </div>
+          <ClipboardList size={19} />
+        </div>
+        <div className="pension-route-grid">
+          {routeOptions.map((route) => (
+            <button
+              type="button"
+              className={String(route.label) === selectedRoute ? "ready selected" : ""}
+              key={String(route.label)}
+              onClick={() => {
+                const routeLabel = String(route.label);
+                setSelectedRoute(routeLabel);
+                setFlowState?.((current) => ({
+                  ...current,
+                  stage: "purpose",
+                  selectedAction: "confirm_withdrawal_reason",
+                  selectedRouteLabel: routeLabel,
+                  routeMaxAmount: parseYuanAmount(route.maximum_amount)
+                }));
+              }}
+            >
+              <span>{route.manual_review_required ? "需要人工审核" : "可继续探索"}</span>
+              <strong>{String(route.label)}</strong>
+              <p>最高 {String(route.maximum_amount)} · {Array.isArray(route.required_evidence) ? route.required_evidence.join("、") : "需要补充材料"}</p>
+            </button>
+          ))}
+        </div>
+        <div className="pension-selected-note">
+          <div>
+            <strong>已选择：{selectedRoute}</strong>
+            <span>{routeHint.emphasis}</span>
+            {amountCappedByRoute ? <span>原目标 {originalRequestedAmount} 超过该路径上限，后续申请将按 {requestedAmount} 继续。</span> : null}
+          </div>
+          {setFlowState && !blockedByLimit ? (
+            <button
+              type="button"
+              onClick={() => setFlowState({
+                selectedAction: "start_controlled_application",
+                stage: "application",
+                selectedRouteLabel: selectedRoute,
+                routeMaxAmount
+              })}
+            >
+              用这个用途继续
+            </button>
+          ) : null}
+        </div>
+      </section>
+
+      <section className="pension-business-section">
+        <div className="pension-section-head">
+          <div>
+            <span>提取 {requestedAmount} 的结果</span>
+            <h4>先看到账金额和长期影响，再决定是否申请</h4>
+          </div>
+          <Gauge size={19} />
+        </div>
+        <div className="pension-impact-grid">
+          <article>
+            <span>预计到账</span>
+            <strong>{estimatedNet}</strong>
+          </article>
+          <article>
+            <span>长期权益影响</span>
+            <strong>-{String(impact?.monthly_income_reduction ?? "¥620")}</strong>
+          </article>
+          <article>
+            <span>预计处理</span>
+            <strong>3-5 个工作日</strong>
+          </article>
+        </div>
+        <p className="pension-section-note">
+          {routeHint.detail}
+          {selectedRouteRecord?.manual_review_required ? " 这个方向通常会多一步材料审核。" : " 如果资料已在系统中，后续步骤会自动跳过重复填写。"}
+        </p>
+      </section>
+    </>
+  );
+}
+
+function PensionRetirementChoiceWorkspace({ result = {} }: { result?: Record<string, unknown> }) {
+  const retirementOptions = result.retirement_options as Record<string, unknown> | undefined;
+  const options = Array.isArray(retirementOptions?.options)
+    ? retirementOptions.options as Array<Record<string, unknown>>
+    : [
+        { retirement_age: 60, estimated_monthly_income: "¥2,900", fit_score: "74%" },
+        { retirement_age: 63, estimated_monthly_income: "¥3,300", fit_score: "86%" },
+        { retirement_age: 65, estimated_monthly_income: "¥3,600", fit_score: "96%" }
+      ];
+  const strategies = Array.isArray(retirementOptions?.claim_strategies)
+    ? retirementOptions.claim_strategies as Array<Record<string, unknown>>
+    : [
+        { label: "按月领取", summary: "适合希望收入稳定、减少一次性支出风险的用户。" },
+        { label: "部分一次性 + 月领", summary: "适合需要先偿还大额支出，同时保留长期收入的用户。" }
+      ];
+  const [selectedAge, setSelectedAge] = useState(String(options[0]?.retirement_age ?? 60));
+  const [selectedStrategy, setSelectedStrategy] = useState(String(strategies[0]?.label ?? "按月领取"));
+
+  return (
+    <>
+      <section className="pension-business-section">
+        <div className="pension-section-head">
+          <div>
+            <span>退休时间线</span>
+            <h4>同一能力转成规划界面，而不是提取表单</h4>
+          </div>
+          <BarChart3 size={19} />
+        </div>
+        <div className="pension-timeline">
+          {options.map((option) => (
+            <button
+              type="button"
+              className={String(option.retirement_age) === selectedAge ? "selected" : ""}
+              key={String(option.retirement_age)}
+              onClick={() => setSelectedAge(String(option.retirement_age))}
+            >
+              <div>
+                <strong>{String(option.retirement_age)} 岁</strong>
+                <span>预计月领 {String(option.estimated_monthly_income)}</span>
+              </div>
+              <div className="pension-timeline-bar">
+                <span style={{ width: String(option.fit_score ?? "74%") }} />
+              </div>
+            </button>
+          ))}
+        </div>
+      </section>
+
+      <section className="pension-business-section">
+        <div className="pension-section-head">
+          <div>
+            <span>领取策略</span>
+            <h4>比较领取方式，等待用户明确办理</h4>
+          </div>
+          <ClipboardList size={19} />
+        </div>
+        <div className="pension-route-grid">
+          {strategies.map((strategy, index) => (
+            <button
+              type="button"
+              className={`${index === 0 ? "ready" : ""} ${String(strategy.label) === selectedStrategy ? "selected" : ""}`}
+              key={String(strategy.label)}
+              onClick={() => setSelectedStrategy(String(strategy.label))}
+            >
+              <span>{index === 0 ? "稳定现金流" : "灵活资金"}</span>
+              <strong>{String(strategy.label)}</strong>
+              <p>{String(strategy.summary)}</p>
+            </button>
+          ))}
+        </div>
+        <div className="pension-selected-note">
+          <strong>当前比较：{selectedAge} 岁退休 · {selectedStrategy}</strong>
+          <span>这里只是规划测算；用户明确办理前，不会进入领取申请。</span>
+        </div>
+      </section>
+    </>
+  );
+}
+
+function PensionNextActions({
+  result = {},
+  flowState,
+  setFlowState
+}: {
+  result?: Record<string, unknown>;
+  flowState: PensionFlowState;
+  setFlowState: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+}) {
+  const actions = Array.isArray(result.next_actions) ? result.next_actions as Array<Record<string, unknown>> : [];
+  if (!actions.length) return null;
+
+  const labels: Record<string, { title: string; detail: string }> = {
+    confirm_withdrawal_reason: {
+      title: "确认提取原因",
+      detail: "继续收敛到住房相关提取、困难救济或仅咨询。"
+    },
+    compare_lower_impact_options: {
+      title: "比较低影响方案",
+      detail: "先比较少取、分期取或暂不提取的影响。"
+    },
+    start_controlled_application: {
+      title: "进入受控申请",
+      detail: "需要条款确认、身份验证和最终授权。"
+    },
+    choose_retirement_age_to_compare: {
+      title: "选择退休年龄",
+      detail: "聚焦比较 60、63、65 岁等退休窗口。"
+    },
+    choose_claim_strategy: {
+      title: "选择领取方式",
+      detail: "比较按月领取和部分一次性领取。"
+    },
+    start_controlled_claim_application: {
+      title: "进入领取申请",
+      detail: "只有明确授权后才创建正式申请。"
+    },
+    reduce_requested_amount: {
+      title: "降低申请金额",
+      detail: "把金额改到当前最高可申请额度以内。"
+    },
+    compare_available_routes: {
+      title: "查看可行路径",
+      detail: "先看每种提取路径的最高金额和材料要求。"
+    }
+  };
+
+  return (
+    <section className="pension-business-section pension-next-actions">
+      <div className="pension-section-head">
+        <div>
+          <span>可选择下一步</span>
+          <h4>选择你想继续看的方向</h4>
+        </div>
+        <GitBranch size={19} />
+      </div>
+      <div className="pension-action-grid">
+        {actions.map((action, index) => {
+          const actionId = String(action.action ?? action.id ?? "next_action");
+          const text = labels[actionId] ?? {
+            title: actionId.replaceAll("_", " "),
+            detail: "继续这个受控业务动作。"
+          };
+          const gated = Boolean(action.requires_explicit_authorization || action.required);
+          const selected = flowState.selectedAction === actionId || (!flowState.selectedAction && index === 0);
+          return (
+            <button
+              type="button"
+              className={`${gated ? "gated" : ""} ${selected ? "selected" : ""}`}
+              key={actionId}
+              onClick={() => setFlowState((current) => ({
+                ...current,
+                selectedAction: actionId,
+                stage: actionId === "compare_lower_impact_options" || actionId === "compare_available_routes"
+                  ? "compare"
+                  : actionId === "start_controlled_application"
+                    ? "application"
+                    : "purpose"
+              }))}
+            >
+              <span>{gated ? "需确认" : "建议"}</span>
+              <strong>{text.title}</strong>
+              <small>{text.detail}</small>
+            </button>
+          );
+        })}
+      </div>
+      <p className="pension-section-note">
+        这些选择会继续缩小任务范围；只有进入受控申请后，才会出现条款确认、身份验证和最终授权。
+      </p>
+      <PensionActionDetail
+        actionId={flowState.selectedAction || String(actions[0]?.action ?? actions[0]?.id ?? "")}
+        result={result}
+        flowState={flowState}
+        flowStage={flowState.stage}
+        setFlowState={setFlowState}
+      />
+    </section>
+  );
+}
+
+function PensionActionDetail({
+  actionId,
+  result,
+  flowState,
+  flowStage,
+  setFlowState
+}: {
+  actionId: string;
+  result: Record<string, unknown>;
+  flowState: PensionFlowState;
+  flowStage: PensionFlowState["stage"];
+  setFlowState: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+}) {
+  const impact = result.withdrawal_impact as Record<string, unknown> | undefined;
+  const limitCheck = result.limit_check as Record<string, unknown> | undefined;
+  const blockedByLimit = limitCheck?.status === "blocked";
+  const requestedAmountValue = parseYuanAmount(impact?.requested_amount) ?? 100000;
+  const routeMaxAmount = flowState.routeMaxAmount;
+  const cappedByRoute = Number.isFinite(routeMaxAmount) && requestedAmountValue > Number(routeMaxAmount);
+  const effectiveAmount = cappedByRoute ? Number(routeMaxAmount) : requestedAmountValue;
+  const amount = formatYuanAmount(effectiveAmount);
+  const originalAmount = formatYuanAmount(requestedAmountValue);
+  const net = cappedByRoute ? estimateNetRange(effectiveAmount) : String(impact?.estimated_net ?? "¥92,000 - ¥95,000");
+
+  if (blockedByLimit) {
+    return (
+      <div className="pension-flow-panel blocked">
+        <div>
+          <span>申请被策略阻断</span>
+          <h4>不能继续进入条款确认或身份验证</h4>
+          <p className="pension-section-note">
+            当前目标金额 {String(limitCheck?.requested_amount ?? formatYuanAmount(requestedAmountValue))} 超过最高可申请额度
+            {String(limitCheck?.maximum_supported_amount ?? "¥120,000")}。请先在右侧修改金额。
+          </p>
+        </div>
+      </div>
+    );
+  }
+
+  if (actionId === "compare_lower_impact_options") {
+    return (
+      <div className="pension-flow-panel">
+        <div>
+          <span>已生成比较方案</span>
+          <h4>系统把“直接取 {amount}”拆成 3 个可比较选择</h4>
+        </div>
+        <div className="pension-option-compare">
+          <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "application" }))}>
+            <span>当前方案</span>
+            <strong>提取 {amount}</strong>
+            <p>预计到账 {net}，最快进入申请。</p>
+          </button>
+          <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "application" }))}>
+            <span>低影响方案</span>
+            <strong>先取一半</strong>
+            <p>降低长期权益影响，保留后续再申请空间。</p>
+          </button>
+          <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "confirm_withdrawal_reason", stage: "decision" }))}>
+            <span>替代方案</span>
+            <strong>暂不提交</strong>
+            <p>保存测算结果，之后继续比较。</p>
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  if (actionId === "start_controlled_application") {
+    return (
+      <div className="pension-flow-panel">
+        <div>
+          <span>受控申请流程已组装</span>
+          <h4>现在开始才会进入正式办理路径</h4>
+          {cappedByRoute ? <p className="pension-section-note">你原本想提取 {originalAmount}，但当前路径最高可申请 {amount}，流程已按上限金额继续。</p> : null}
+        </div>
+        <ol className="pension-application-flow">
+          <li className="done"><strong>目标和金额</strong><span>提取 {amount}，预计到账 {net}</span></li>
+          <li className="done"><strong>可行路径</strong><span>住房公积金提取优先，困难救济作为备选</span></li>
+          <li className={flowStage === "application" ? "current" : "done"}><strong>条款确认</strong><span>确认用途、材料真实性和到账金额可能变化</span></li>
+          <li className={flowStage === "identity" ? "current" : flowStage === "authorization" || flowStage === "submitted" ? "done" : ""}><strong>身份验证</strong><span>强身份校验后才允许提交</span></li>
+          <li className={flowStage === "authorization" ? "current" : flowStage === "submitted" ? "done" : ""}><strong>最终授权</strong><span>用户确认后才创建正式申请</span></li>
+        </ol>
+        <div className="pension-flow-actions">
+          {flowStage === "application" ? (
+            <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "identity" }))}>确认条款，继续身份验证</button>
+          ) : null}
+          {flowStage === "identity" ? (
+            <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "authorization" }))}>身份验证通过，查看最终授权</button>
+          ) : null}
+          {flowStage === "authorization" ? (
+            <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "submitted" }))}>确认并提交申请</button>
+          ) : null}
+          {flowStage === "submitted" ? <strong className="pension-submit-result">申请已创建，预计 3-5 个工作日处理。</strong> : null}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="pension-flow-panel">
+      <div>
+        <span>下一步已收敛</span>
+        <h4>先确认真实用途，再自动裁剪材料和审核步骤</h4>
+      </div>
+      <ol className="pension-application-flow compact">
+        <li className="current"><button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "application" }))}><strong>住房用途</strong><span>房贷、租房或主要住房相关资金需求</span></button></li>
+        <li><button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "application", selectedRouteLabel: "困难救济提取", routeMaxAmount: 50000 }))}><strong>困难救济</strong><span>收入变化、医疗或短期生活困难</span></button></li>
+        <li><button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "confirm_withdrawal_reason", stage: "decision" }))}><strong>仅咨询</strong><span>保存测算，不创建申请</span></button></li>
+      </ol>
+    </div>
+  );
+}
+
 function extractRetirementAgeFromPrompt(prompt: string) {
   const patterns = [
     /\bretire(?:ment)?\s*(?:at|age)?\s*(\d{2,3})\b/i,
@@ -1019,54 +2066,134 @@ function extractRetirementAgeFromPrompt(prompt: string) {
 }
 
 function extractContributionRateFromPrompt(prompt: string) {
-  const match = prompt.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent|per cent)\b/i);
+  const match = prompt.match(/\b(\d{1,3}(?:\.\d+)?)\s*(?:%|percent\b|per cent\b)/i);
   if (!match) return undefined;
   const rate = Number(match[1]);
   return Number.isFinite(rate) ? rate : undefined;
 }
 
+function extractWithdrawalAmountFromPrompt(prompt: string) {
+  const match = prompt.match(
+    /[£¥]\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?|(\d+(?:\.\d+)?)\s*(?:万|萬元|万元)|([一二两三四五六七八九十]+)\s*(?:万|萬元|万元)|\b(\d{4,7})\b/
+  );
+  const chineseWan = match?.[3];
+  if (chineseWan) {
+    const parsed = parseSmallChineseNumber(chineseWan);
+    return Number.isFinite(parsed) ? parsed * 10000 : undefined;
+  }
+  const raw = match?.[1] ?? match?.[2] ?? match?.[4];
+  if (!raw) return undefined;
+  const value = Number(raw.replaceAll(",", ""));
+  if (!Number.isFinite(value)) return undefined;
+  return match?.[2] ? value * 10000 : value;
+}
+
+function parseSmallChineseNumber(value: string) {
+  const digits: Record<string, number> = {
+    一: 1,
+    二: 2,
+    两: 2,
+    三: 3,
+    四: 4,
+    五: 5,
+    六: 6,
+    七: 7,
+    八: 8,
+    九: 9
+  };
+  if (value === "十") return 10;
+  if (value.includes("十")) {
+    const [tens, ones] = value.split("十");
+    return (tens ? digits[tens] ?? 1 : 1) * 10 + (ones ? digits[ones] ?? 0 : 0);
+  }
+  return digits[value] ?? Number.NaN;
+}
+
 function AgenticWebPage() {
-  const [activeWorkflowId, setActiveWorkflowId] = useState(() => {
-    const saved = window.localStorage.getItem("agentic.activeWorkflowId");
-    return saved && workflowById.has(saved) ? saved : agenticWorkflows[0].id;
-  });
-  const activeWorkflow = workflowById.get(activeWorkflowId) ?? agenticWorkflows[0];
+  const [activeWorkflowId, setActiveWorkflowId] = useState(() => defaultAgenticWorkflow.id);
+  const activeWorkflow = workflowById.get(activeWorkflowId) ?? defaultAgenticWorkflow;
   const [renderedWorkflowId, setRenderedWorkflowId] = useState(activeWorkflow.id);
-  const renderedWorkflow = workflowById.get(renderedWorkflowId) ?? agenticWorkflows[0];
-  const [prompt, setPrompt] = useState(() => window.localStorage.getItem("agentic.prompt") || activeWorkflow.prompt);
+  const renderedWorkflow = workflowById.get(renderedWorkflowId) ?? defaultAgenticWorkflow;
+  const [prompt, setPrompt] = useState(() => activeWorkflow.prompt);
   const assistantTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const chatHistoryRef = useRef<HTMLDivElement | null>(null);
+  const layoutTransitionTimerRef = useRef<number | undefined>(undefined);
   const [response, setResponse] = useState<AgentResponse | null>(null);
   const [audit, setAudit] = useState<AuditRecord | null>(null);
   const [events, setEvents] = useState<AguiRunEvent[]>([]);
+  const [conversation, setConversation] = useState<AgenticChatTurn[]>([]);
+  const [condensedIntent, setCondensedIntent] = useState(activeWorkflow.title);
   const [loading, setLoading] = useState(false);
   const [workflowActionLoading, setWorkflowActionLoading] = useState(false);
   const [error, setError] = useState("");
   const [workspaceStarted, setWorkspaceStarted] = useState(false);
+  const [layoutEngaged, setLayoutEngaged] = useState(false);
+  const [layoutTransitioning, setLayoutTransitioning] = useState(false);
   const [workflowRun, setWorkflowRun] = useState<WorkflowRun | null>(null);
   const [subscriptionAmount, setSubscriptionAmount] = useState(8000);
   const [contributionRate, setContributionRate] = useState(10);
   const [retirementAge, setRetirementAge] = useState(65);
+  const [withdrawalAmount, setWithdrawalAmount] = useState(100000);
+  const [pensionFlowState, setPensionFlowState] = useState<PensionFlowState>({
+    stage: "decision",
+    selectedAction: "confirm_withdrawal_reason"
+  });
 
-  const currentPrompt = prompt || activeWorkflow.prompt;
+  const currentPrompt = prompt;
   const hasRun = workspaceStarted || Boolean(response || loading || error);
+  const shellClassName = layoutEngaged
+    ? "agentic-shell engaged"
+    : layoutTransitioning
+      ? "agentic-shell transitioning"
+      : "agentic-shell";
   useEffect(() => {
     window.scrollTo({ left: 0, top: window.scrollY });
   }, []);
 
   useEffect(() => {
     window.localStorage.setItem("agentic.activeWorkflowId", activeWorkflowId);
-    window.localStorage.setItem("agentic.prompt", currentPrompt);
+    if (currentPrompt) {
+      window.localStorage.setItem("agentic.prompt", currentPrompt);
+    } else {
+      window.localStorage.removeItem("agentic.prompt");
+    }
   }, [activeWorkflowId, currentPrompt]);
 
   useEffect(() => {
-    setPrompt(activeWorkflow.prompt);
-  }, [activeWorkflow]);
+    if (!workspaceStarted) {
+      setCondensedIntent(activeWorkflow.title);
+      setPrompt(activeWorkflow.prompt);
+    }
+  }, [activeWorkflow, workspaceStarted]);
+
+  useEffect(() => {
+    const node = chatHistoryRef.current;
+    if (!node) return;
+    node.scrollTo({ top: node.scrollHeight, behavior: "smooth" });
+  }, [conversation, loading]);
+
+  useEffect(() => {
+    return () => {
+      if (layoutTransitionTimerRef.current) {
+        window.clearTimeout(layoutTransitionTimerRef.current);
+      }
+    };
+  }, []);
 
   function chooseWorkflow(workflow: AgenticWorkflow) {
     setActiveWorkflowId(workflow.id);
-    if (hasRun) {
-      window.requestAnimationFrame(() => assistantTextareaRef.current?.focus());
+    setPrompt(workflow.prompt);
+    if (workflow.id === "pension-cash-access") {
+      setWithdrawalAmount(Number(workflow.input.requestedWithdrawalAmount ?? 100000));
     }
+    window.requestAnimationFrame(() => assistantTextareaRef.current?.focus());
+  }
+
+  function clearConversationHistory() {
+    setConversation([]);
+    setPrompt("");
+    setCondensedIntent(renderedWorkflow.title);
+    window.requestAnimationFrame(() => assistantTextareaRef.current?.focus());
   }
 
   async function submitAgenticRequest(event?: React.FormEvent) {
@@ -1074,20 +2201,64 @@ function AgenticWebPage() {
     const question = currentPrompt.trim();
     if (!question) return;
 
-    const desiredContribution = Number(activeWorkflow.input.desiredContributionRate ?? 10);
-    const desiredRetirementAge = Number(activeWorkflow.input.targetRetirementAge ?? 65);
-    const promptContribution = extractContributionRateFromPrompt(question);
-    const promptRetirementAge = extractRetirementAgeFromPrompt(question);
-    const isRerunOfCurrentWorkflow = workspaceStarted && activeWorkflow.id === renderedWorkflowId;
+    const priorConversation = conversation;
+    const promptWithdrawalAmount = extractWithdrawalAmountFromPrompt(question);
+    const workflowSignal = inferWorkflowFromConversation(question, activeWorkflow);
+    const hasExplicitWorkflowSignal = Boolean(workflowSignal);
+    const shouldContinueCurrentWorkflow = !hasExplicitWorkflowSignal && workspaceStarted && Boolean(promptWithdrawalAmount);
+    const inferredWorkflow = workflowSignal?.workflow ?? (shouldContinueCurrentWorkflow ? renderedWorkflow : activeWorkflow);
+    const shouldInvokeWorkflow = hasExplicitWorkflowSignal || shouldContinueCurrentWorkflow;
+    const nextCondensedIntent = shouldInvokeWorkflow
+      ? buildCondensedIntent(priorConversation, question, inferredWorkflow)
+      : "需要更多信息才能选择业务";
+    const conversationPrompt = buildConversationPrompt(priorConversation, question, nextCondensedIntent);
+    const desiredContribution = Number(inferredWorkflow.input.desiredContributionRate ?? 10);
+    const desiredRetirementAge = Number(inferredWorkflow.input.targetRetirementAge ?? 65);
+    const promptContribution = extractContributionRateFromPrompt(conversationPrompt);
+    const promptRetirementAge = extractRetirementAgeFromPrompt(conversationPrompt);
+    const isRerunOfCurrentWorkflow = workspaceStarted && inferredWorkflow.id === renderedWorkflowId;
     const submittedContribution = isRerunOfCurrentWorkflow ? contributionRate : (promptContribution ?? desiredContribution);
     const submittedRetirementAge = isRerunOfCurrentWorkflow ? retirementAge : (promptRetirementAge ?? desiredRetirementAge);
-    setRenderedWorkflowId(activeWorkflow.id);
+    const submittedWithdrawalAmount = inferredWorkflow.id === "pension-cash-access"
+      ? promptWithdrawalAmount ?? (isRerunOfCurrentWorkflow ? withdrawalAmount : Number(inferredWorkflow.input.requestedWithdrawalAmount ?? 100000))
+      : withdrawalAmount;
+    const userTurn: AgenticChatTurn = {
+      id: `user-${Date.now()}`,
+      role: "user",
+      text: question,
+      intent: nextCondensedIntent,
+      workflowId: inferredWorkflow.id,
+      timestamp: new Date().toISOString()
+    };
+    setConversation((current) => [...current, userTurn]);
+    if (shouldInvokeWorkflow) {
+      setActiveWorkflowId(inferredWorkflow.id);
+      setRenderedWorkflowId(inferredWorkflow.id);
+    }
+    setCondensedIntent(nextCondensedIntent);
     setWorkspaceStarted(true);
+    if (shouldInvokeWorkflow && inferredWorkflow.id === "pension-cash-access") {
+      setPensionFlowState({ stage: "decision", selectedAction: "confirm_withdrawal_reason" });
+    }
+    if (!layoutEngaged) {
+      setLayoutTransitioning(true);
+      if (layoutTransitionTimerRef.current) {
+        window.clearTimeout(layoutTransitionTimerRef.current);
+      }
+      layoutTransitionTimerRef.current = window.setTimeout(() => {
+        setLayoutEngaged(true);
+        setLayoutTransitioning(false);
+      }, 260);
+    }
     setWorkflowRun(null);
-    if (activeWorkflow.id === "isa-top-up-readiness") setSubscriptionAmount(8000);
-    if (activeWorkflow.domain === "Workplace Investing") {
+    setPrompt("");
+    if (shouldInvokeWorkflow && inferredWorkflow.id === "isa-top-up-readiness") setSubscriptionAmount(8000);
+    if (shouldInvokeWorkflow && inferredWorkflow.domain === "Workplace Investing") {
       setContributionRate(Number.isFinite(submittedContribution) ? submittedContribution : 10);
       setRetirementAge(Number.isFinite(submittedRetirementAge) ? submittedRetirementAge : 65);
+    }
+    if (shouldInvokeWorkflow && inferredWorkflow.id === "pension-cash-access" && Number.isFinite(submittedWithdrawalAmount)) {
+      setWithdrawalAmount(submittedWithdrawalAmount);
     }
     setLoading(true);
     setError("");
@@ -1096,19 +2267,60 @@ function AgenticWebPage() {
     setEvents([]);
 
     try {
-      const input = {
-        ...activeWorkflow.input,
-        microWorkflowId: activeWorkflow.microWorkflow,
-        ...(activeWorkflow.id === "isa-top-up-readiness" ? { plannedIsaSubscription: subscriptionAmount } : {}),
-        ...(activeWorkflow.domain === "Workplace Investing" ? {
-          desiredContributionRate: submittedContribution,
-          targetRetirementAge: submittedRetirementAge
-        } : {})
-      };
+      if (isLocalPensionWorkflow(inferredWorkflow)) {
+        const data = createLocalPensionAgentResponse(inferredWorkflow, conversationPrompt);
+        setEvents([
+          {
+            id: "local-pension-intent",
+            type: "RUN_STARTED",
+            label: "Resolve Chinese pension intent",
+            detail: "Task Plan assembled from controlled stage registry.",
+            status: "completed"
+          },
+          {
+            id: "local-pension-render",
+            type: "TOOL_RESULT",
+            label: "Render dynamic workspace",
+            detail: "Presentation selected from the task plan, not a fixed page route.",
+            status: "completed"
+          }
+        ]);
+        setResponse(data);
+        setWorkflowRun(data.workflowRun ?? null);
+        setConversation((current) => [
+          ...current,
+          {
+            id: `assistant-${Date.now()}`,
+            role: "assistant",
+            text: data.result?.summary ?? data.resolution.reasoning,
+            intent: data.resolution.intent ?? nextCondensedIntent,
+            workflowId: inferredWorkflow.id,
+            timestamp: new Date().toISOString(),
+            status: data.resolution.status
+          }
+        ]);
+        setAudit(null);
+        return;
+      }
+
+      const input = shouldInvokeWorkflow
+        ? {
+            ...inferredWorkflow.input,
+            microWorkflowId: inferredWorkflow.microWorkflow,
+            ...(inferredWorkflow.id === "isa-top-up-readiness" ? { plannedIsaSubscription: subscriptionAmount } : {}),
+            ...(inferredWorkflow.domain === "Workplace Investing" ? {
+              desiredContributionRate: submittedContribution,
+              targetRetirementAge: submittedRetirementAge
+            } : {}),
+            ...(inferredWorkflow.id === "pension-cash-access" ? { requestedWithdrawalAmount: submittedWithdrawalAmount } : {})
+          }
+        : {
+            customerId: String(inferredWorkflow.input.customerId ?? "CN001")
+          };
       const data = await runAguiRequest(
         {
           ...input,
-          prompt: question
+          prompt: conversationPrompt
         },
         (streamEvent) => {
           setEvents((current) => [
@@ -1125,6 +2337,18 @@ function AgenticWebPage() {
       );
       setResponse(data);
       setWorkflowRun(data.workflowRun ?? null);
+      setConversation((current) => [
+        ...current,
+        {
+          id: `assistant-${Date.now()}`,
+          role: "assistant",
+          text: data.result?.summary ?? data.resolution.reasoning,
+          intent: data.resolution.intent ?? nextCondensedIntent,
+          workflowId: inferredWorkflow.id,
+          timestamp: new Date().toISOString(),
+          status: data.resolution.status
+        }
+      ]);
 
       const nextAudit = data.result?.audit_trace_id
         ? await fetch(`${gatewayBaseUrl}/audit/${data.result.audit_trace_id}`)
@@ -1134,6 +2358,18 @@ function AgenticWebPage() {
       setAudit(nextAudit);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "Request failed");
+      setConversation((current) => [
+        ...current,
+        {
+          id: `assistant-error-${Date.now()}`,
+          role: "assistant",
+          text: caught instanceof Error ? caught.message : "Request failed",
+          intent: nextCondensedIntent,
+          workflowId: inferredWorkflow.id,
+          timestamp: new Date().toISOString(),
+          status: "unsupported"
+        }
+      ]);
       setEvents((current) => [
         ...current,
         {
@@ -1190,7 +2426,7 @@ function AgenticWebPage() {
   );
 
   return (
-    <main className={hasRun ? "agentic-shell engaged" : "agentic-shell"}>
+    <main className={shellClassName}>
       <section className="agentic-topbar">
         <a href="/" className="console-link">
           <PanelsTopLeft size={17} />
@@ -1205,83 +2441,21 @@ function AgenticWebPage() {
       </section>
 
       <section className="agentic-layout">
-        <aside className="agentic-assistant-panel">
-          <div className="assistant-panel-head">
-            <div>
-              <span>Business scenarios</span>
-              <strong>Choose a user journey</strong>
-            </div>
-            <SlidersHorizontal size={18} />
-          </div>
-
-          <ScenarioModeStrip activeWorkflow={activeWorkflow} />
-
-          <form className="agentic-compose compact" onSubmit={(event) => void submitAgenticRequest(event)}>
-            <label>
-              <span>Customer or adviser asks</span>
-              <textarea
-                ref={assistantTextareaRef}
-                value={currentPrompt}
-                onChange={(event) => setPrompt(event.target.value)}
-                placeholder="Ask a financial business question..."
-              />
-            </label>
-            <button className="agentic-send" type="submit" disabled={loading || !currentPrompt.trim()}>
-              {loading ? <Loader2 className="spin" size={18} /> : <SendHorizontal size={18} />}
-              <span>Generate workspace</span>
-            </button>
-          </form>
-
-          <div className="agentic-question-list">
-            {agenticWorkflows.map((workflow) => (
-              <button
-                key={workflow.id}
-                type="button"
-                className={workflow.id === activeWorkflowId ? "agentic-question active" : "agentic-question"}
-                onClick={() => chooseWorkflow(workflow)}
-              >
-                <strong>{workflow.label}</strong>
-                <span>{workflow.narrative}</span>
-                <small>{workflow.domain} / {workflow.audience}</small>
-              </button>
-            ))}
-          </div>
-        </aside>
-
         <section className="agentic-main">
-          {!hasRun ? (
+          {!layoutEngaged ? (
             <div className="agentic-start">
-              <div className="agentic-orbit" aria-hidden="true">
-                <span />
-                <span />
-                <span />
-              </div>
-              <div className="agentic-brand-mark">
-                <Search size={28} />
-              </div>
-              <p className="agentic-kicker">Natural language in. Business workspace out.</p>
-              <h1>Generate the next financial workflow.</h1>
-              <form className="agentic-compose hero-compose" onSubmit={(event) => void submitAgenticRequest(event)}>
+              <form className="agentic-compose hero-compose initial-compose" onSubmit={(event) => void submitAgenticRequest(event)}>
                 <textarea
                   value={currentPrompt}
                   onChange={(event) => setPrompt(event.target.value)}
                   placeholder="Ask as a client, member, or adviser..."
                   aria-label="Agentic question"
                 />
-                <button className="agentic-send" type="submit" disabled={!currentPrompt.trim()}>
-                  <SendHorizontal size={18} />
+                <button className="agentic-send" type="submit" disabled={loading || !currentPrompt.trim()}>
+                  {loading ? <Loader2 className="spin" size={18} /> : <SendHorizontal size={18} />}
                   <span>Generate</span>
                 </button>
               </form>
-              <div className="agentic-suggestions">
-                {agenticWorkflows.map((workflow) => (
-                  <button key={workflow.id} type="button" onClick={() => chooseWorkflow(workflow)}>
-                    <strong>{workflow.label}</strong>
-                    <span>{workflow.domain} / {workflow.microWorkflow.replaceAll("_", " ")}</span>
-                  </button>
-                ))}
-              </div>
-              <DemoAssemblyPreview activeWorkflow={activeWorkflow} />
             </div>
           ) : (
             <>
@@ -1291,10 +2465,20 @@ function AgenticWebPage() {
                   <h1>{hasIntentBoundary ? "Request recognised" : renderedWorkflow.title}</h1>
                 </div>
                 <div className="surface-meta">
-                  <span>{hasIntentBoundary ? response?.resolution.intent ?? "outside catalog" : renderedWorkflow.audience}</span>
-                  <span>{response?.resolution.status ?? (loading ? "composing" : "ready")}</span>
-                  {!hasIntentBoundary ? <span>{renderedWorkflow.microWorkflow.replaceAll("_", " ")}</span> : null}
-                  {workflowRun ? <span>plan v{workflowRun.agent.planVersion}</span> : null}
+                  {isPensionWorkflow(renderedWorkflow) && !hasIntentBoundary ? (
+                    <>
+                      <span>会员服务</span>
+                      <span>{loading ? "正在准备" : "方案已准备"}</span>
+                      <span>未提交申请</span>
+                    </>
+                  ) : (
+                    <>
+                      <span>{hasIntentBoundary ? response?.resolution.intent ?? "outside catalog" : renderedWorkflow.audience}</span>
+                      <span>{response?.resolution.status ?? (loading ? "composing" : "ready")}</span>
+                      {!hasIntentBoundary ? <span>{renderedWorkflow.microWorkflow.replaceAll("_", " ")}</span> : null}
+                      {workflowRun ? <span>plan v{workflowRun.agent.planVersion}</span> : null}
+                    </>
+                  )}
                 </div>
               </div>
 
@@ -1309,8 +2493,8 @@ function AgenticWebPage() {
                 <IntentBoundarySurface response={response} />
               ) : (
                 <>
-                  <MicroWorkflowProgress workflow={renderedWorkflow} run={workflowRun} />
-                  <AgentWorkBrief run={workflowRun} loading={loading} />
+                  <MicroWorkflowProgress workflow={renderedWorkflow} run={workflowRun} pensionFlowStage={pensionFlowState.stage} />
+                  {!isPensionWorkflow(renderedWorkflow) ? <AgentWorkBrief run={workflowRun} loading={loading} /> : null}
                   <GeneratedBusinessWorkspace
                     workflow={renderedWorkflow}
                     response={response}
@@ -1325,12 +2509,101 @@ function AgenticWebPage() {
                     workflowRun={workflowRun}
                     workflowActionLoading={workflowActionLoading}
                     performWorkflowAction={performWorkflowAction}
+                    pensionFlowState={pensionFlowState}
+                    setPensionFlowState={setPensionFlowState}
                   />
                 </>
               )}
             </>
           )}
         </section>
+
+        <aside className="agentic-assistant-panel">
+          <div className="assistant-panel-head">
+            <div>
+              <span>Conversation</span>
+              <strong>Intent narrows as the thread continues</strong>
+            </div>
+            <button
+              type="button"
+              className="new-conversation-button"
+              onClick={clearConversationHistory}
+              aria-label="Clear conversation history"
+              title="Clear conversation history"
+            >
+              <RotateCcw size={16} />
+            </button>
+          </div>
+
+          <div className="intent-focus-card">
+            <span>Condensed intent</span>
+            <strong>{condensedIntent}</strong>
+            <small>{activeWorkflow.domain} / {activeWorkflow.audience}</small>
+          </div>
+
+          <div className="agentic-chat-history" ref={chatHistoryRef} aria-live="polite">
+            {conversation.length ? (
+              conversation.map((turn) => (
+                <article className={`agentic-chat-turn ${turn.role}`} key={turn.id}>
+                  <div>
+                    <span>{turn.role === "user" ? "You" : "Agent"}</span>
+                    {turn.status ? <small>{turn.status.replaceAll("_", " ")}</small> : null}
+                  </div>
+                  <p>{turn.text}</p>
+                  <em>{turn.intent}</em>
+                </article>
+              ))
+            ) : (
+              <div className="agentic-chat-empty">
+                <BrainCircuit size={20} />
+                <p>Start with a scenario or ask directly. Follow-up messages keep the same thread and refine the intent.</p>
+              </div>
+            )}
+            {loading ? (
+              <article className="agentic-chat-turn assistant thinking">
+                <div>
+                  <span>Agent</span>
+                  <small>composing</small>
+                </div>
+                <p>Reading the latest turn against the running intent...</p>
+              </article>
+            ) : null}
+          </div>
+
+          <form className="agentic-compose compact chat-compose" onSubmit={(event) => void submitAgenticRequest(event)}>
+            <label>
+              <span>Continue the conversation</span>
+              <textarea
+                ref={assistantTextareaRef}
+                value={currentPrompt}
+                onChange={(event) => setPrompt(event.target.value)}
+                placeholder="Ask a follow-up or change the goal..."
+              />
+            </label>
+            <button className="agentic-send" type="submit" disabled={loading || !currentPrompt.trim()}>
+              {loading ? <Loader2 className="spin" size={18} /> : <SendHorizontal size={18} />}
+              <span>{hasRun ? "Send follow-up" : "Generate workspace"}</span>
+            </button>
+          </form>
+
+          <ScenarioModeStrip activeWorkflow={activeWorkflow} />
+
+          <div className="agentic-question-list compact-list">
+            {agenticWorkflows.map((workflow) => (
+              <button
+                key={workflow.id}
+                type="button"
+                className={workflow.id === activeWorkflowId ? "agentic-question active" : "agentic-question"}
+                onClick={() => chooseWorkflow(workflow)}
+                title="Copy this question to the input"
+              >
+                <strong>{workflow.label}</strong>
+                <span>{workflow.narrative}</span>
+                <small>{workflow.domain} / {workflow.audience}</small>
+              </button>
+            ))}
+          </div>
+        </aside>
       </section>
     </main>
   );
@@ -1347,7 +2620,8 @@ function IntentBoundarySurface({ response }: { response: AgentResponse }) {
     personal_investing_isa_allowance_review: "ISA allowance review",
     sipp_drawdown_pathway_review: "SIPP drawdown review",
     workplace_pension_contribution_guidance: "Workplace pension guidance",
-    adviser_platform_model_portfolio_review: "Adviser portfolio review"
+    adviser_platform_model_portfolio_review: "Adviser portfolio review",
+    retirement_pension_task_orchestration: "养老金任务编排"
   };
   const available = response.resolution.availableCapabilities ?? [];
 
@@ -1422,16 +2696,41 @@ function DemoAssemblyPreview({ activeWorkflow }: { activeWorkflow: AgenticWorkfl
 
 function MicroWorkflowProgress({
   workflow,
-  run
+  run,
+  pensionFlowStage = "decision"
 }: {
   workflow: AgenticWorkflow;
   run: WorkflowRun | null;
+  pensionFlowStage?: PensionFlowState["stage"];
 }) {
-  const steps = run?.steps ?? workflow.steps.map((step) => ({ ...step, status: "waiting" as const }));
-  const currentStep = run?.currentStepIndex ?? 0;
+  const rawSteps = run?.steps ?? workflow.steps.map((step) => ({ ...step, status: "waiting" as const }));
+  const pensionWorkflow = isPensionWorkflow(workflow);
+  const pensionCurrentStep = pensionFlowStage === "application"
+    ? 6
+    : pensionFlowStage === "identity"
+      ? 7
+      : pensionFlowStage === "authorization" || pensionFlowStage === "submitted"
+        ? 8
+        : Math.max(0, rawSteps.length - 1);
+  const steps = pensionWorkflow
+    ? [
+        ...rawSteps,
+        ...(workflow.id === "pension-cash-access"
+          ? [
+              { label: "条款确认", detail: "确认用途、材料真实性和到账金额可能变化。", status: "waiting" as const },
+              { label: "身份验证", detail: "强身份校验后才允许提交。", status: "waiting" as const },
+              { label: "最终授权", detail: "用户确认后才创建正式申请。", status: "waiting" as const }
+            ]
+          : [])
+      ].map((step, index) => ({
+        ...step,
+        status: index < pensionCurrentStep || pensionFlowStage === "submitted" ? "completed" as const : index === pensionCurrentStep ? "requires_action" as const : "waiting" as const
+      }))
+    : rawSteps;
+  const currentStep = pensionWorkflow ? Math.min(pensionCurrentStep, steps.length - 1) : run?.currentStepIndex ?? 0;
 
   return (
-    <nav className="micro-workflow-progress" aria-label="Current business workflow">
+    <nav className={pensionWorkflow ? "micro-workflow-progress customer-progress" : "micro-workflow-progress"} aria-label="Current business workflow">
       {steps.map((step, index) => (
         <button
           type="button"
@@ -1502,7 +2801,9 @@ function GeneratedBusinessWorkspace({
   setRetirementAge,
   workflowRun,
   workflowActionLoading,
-  performWorkflowAction
+  performWorkflowAction,
+  pensionFlowState,
+  setPensionFlowState
 }: {
   workflow: AgenticWorkflow;
   response: AgentResponse | null;
@@ -1517,12 +2818,15 @@ function GeneratedBusinessWorkspace({
   workflowRun: WorkflowRun | null;
   workflowActionLoading: boolean;
   performWorkflowAction: PerformWorkflowAction;
+  pensionFlowState: PensionFlowState;
+  setPensionFlowState: React.Dispatch<React.SetStateAction<PensionFlowState>>;
 }) {
   const result = response?.result ?? {};
   const sourceApis = response?.result?.source_apis ?? workflow.apiPlan.map((api) => `${api} API`);
   const confidence = response ? Math.round(response.resolution.confidence * 100) : 0;
   const currentStep = workflowRun?.currentStepIndex ?? 0;
   const currentRunStep = workflowRun?.steps[currentStep];
+  const pensionWorkflow = isPensionWorkflow(workflow);
   const isLastStep = currentStep === (workflowRun?.steps.length ?? workflow.steps.length) - 1;
   const retryRequired = Boolean(currentRunStep?.allowedActions.includes("retry") && currentRunStep.attempts === 0);
   const panelOwnsAction = Boolean(
@@ -1546,17 +2850,19 @@ function GeneratedBusinessWorkspace({
         </section>
       ) : null}
 
-      <section className="workflow-focus-header">
-        <div>
-          <span>Now working on</span>
-          <h2>{currentRunStep?.label ?? workflow.steps[currentStep]?.label}</h2>
-          <p>{currentRunStep?.detail ?? workflow.steps[currentStep]?.detail}</p>
-        </div>
-        <div className="workflow-focus-status">
-          <span>{currentStep + 1} of {workflowRun?.steps.length ?? workflow.steps.length}</span>
-          <strong>{response ? `${confidence}% confidence` : loading ? "Working" : "Ready"}</strong>
-        </div>
-      </section>
+      {!pensionWorkflow ? (
+        <section className="workflow-focus-header">
+          <div>
+            <span>Now working on</span>
+            <h2>{currentRunStep?.label ?? workflow.steps[currentStep]?.label}</h2>
+            <p>{currentRunStep?.detail ?? workflow.steps[currentStep]?.detail}</p>
+          </div>
+          <div className="workflow-focus-status">
+            <span>{currentStep + 1} of {workflowRun?.steps.length ?? workflow.steps.length}</span>
+            <strong>{response ? `${confidence}% confidence` : loading ? "Working" : "Ready"}</strong>
+          </div>
+        </section>
+      ) : null}
 
       {!loading && workflow.id === "isa-top-up-readiness" ? (
         <IsaTopUpWorkspace
@@ -1594,7 +2900,21 @@ function GeneratedBusinessWorkspace({
         />
       ) : null}
 
-      {!loading && workflowRun && !panelOwnsAction ? <div className="workflow-action-bar backend-action-bar">
+      {!loading && workflow.id === "pension-cash-access" ? (
+        <>
+          <PensionCashAccessWorkspace result={result} setFlowState={setPensionFlowState} />
+          <PensionNextActions result={result} flowState={pensionFlowState} setFlowState={setPensionFlowState} />
+        </>
+      ) : null}
+
+      {!loading && workflow.id === "pension-retirement-choice" ? (
+        <>
+          <PensionRetirementChoiceWorkspace result={result} />
+          <PensionNextActions result={result} flowState={pensionFlowState} setFlowState={setPensionFlowState} />
+        </>
+      ) : null}
+
+      {!loading && workflowRun && !panelOwnsAction && !pensionWorkflow ? <div className="workflow-action-bar backend-action-bar">
         <span className="run-identity">Run {workflowRun.id}</span>
         <span>{isLastStep ? "Final review" : `Next: ${workflowRun.steps[currentStep + 1]?.label}`}</span>
         <button

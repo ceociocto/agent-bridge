@@ -111,6 +111,59 @@ export type Projection = {
   goalProbability: number;
 };
 
+export type CnRetirementProfile = {
+  customerId: string;
+  name: string;
+  age: number;
+  employmentStatus: string;
+  identityStatus: string;
+  verifiedBankAccount: string;
+  ordinaryRetirementAge: number;
+  targetRetirementAge: number;
+};
+
+export type CnPensionPortfolio = {
+  customerId: string;
+  totalBalance: number;
+  accounts: Array<Account & { ratio: number }>;
+};
+
+export type CnWithdrawalEligibility = {
+  customerId: string;
+  status: string;
+  routes: Array<{
+    route: string;
+    label: string;
+    maximumAmount: number;
+    requiredEvidence: string[];
+    manualReviewRequired: boolean;
+  }>;
+  formalApplicationStarted: boolean;
+};
+
+export type CnWithdrawalImpact = {
+  customerId: string;
+  requestedAmount: number;
+  estimatedNetLow: number;
+  estimatedNetHigh: number;
+  projectedBalanceAfter: number;
+  monthlyIncomeReduction: number;
+  revocabilityWindowMinutes: number;
+};
+
+export type CnRetirementClaimOptions = {
+  customerId: string;
+  targetRetirementAge: number;
+  options: Array<{
+    retirementAge: number;
+    projectedBalance: number;
+    estimatedMonthlyIncome: number;
+    fitScore: number;
+  }>;
+  claimStrategies: Array<{ id: string; label: string; summary: string }>;
+  formalClaimStarted: boolean;
+};
+
 export const valueStreamClient = {
   profile: (customerId: string) => getJson<Profile>(`/profile/${customerId}`),
   accounts: (customerId: string) => getJson<Account[]>(`/accounts/${customerId}`),
@@ -121,6 +174,14 @@ export const valueStreamClient = {
   drawdown: (customerId: string) => getJson<DrawdownProfile>(`/drawdown/${customerId}`),
   workplacePlan: (customerId: string) => getJson<WorkplacePlan>(`/workplace-plan/${customerId}`),
   adviserPortfolio: (customerId: string) => getJson<AdviserPortfolio>(`/adviser-portfolio/${customerId}`),
+  cnRetirementProfile: (customerId: string) => getJson<CnRetirementProfile>(`/cn-retirement-profile/${customerId}`),
+  cnPensionPortfolio: (customerId: string) => getJson<CnPensionPortfolio>(`/cn-pension-portfolio/${customerId}`),
+  cnWithdrawalEligibility: (customerId: string) =>
+    getJson<CnWithdrawalEligibility>(`/cn-withdrawal-eligibility/${customerId}`),
+  cnWithdrawalImpact: (body: { customerId: string; amount?: number }) =>
+    postJson<CnWithdrawalImpact>("/cn-withdrawal-impact", body),
+  cnRetirementClaimOptions: (body: { customerId: string; targetRetirementAge?: number }) =>
+    postJson<CnRetirementClaimOptions>("/cn-retirement-claim-options", body),
   projection: (body: {
     customerId: string;
     targetRetirementAge?: number;

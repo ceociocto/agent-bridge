@@ -8,6 +8,7 @@
     "mcp:dev": "pnpm --filter @agent-bridge/mcp-server dev",
     "mcp:smoke": "pnpm --filter @agent-bridge/mcp-server smoke",
     "eval:router": "pnpm --filter @agent-bridge/gateway eval:router",
+    "eval:router:cn": "pnpm --filter @agent-bridge/gateway eval:router ../../evals/cn-pension-router-cases.jsonl",
     "build": "pnpm -r build",
     "typecheck": "pnpm -r typecheck"
   },

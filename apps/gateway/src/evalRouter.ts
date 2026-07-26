@@ -42,7 +42,15 @@ function readCases(filePath: string): RouterEvalCase[] {
     .split("\n")
     .map((line) => line.trim())
     .filter(Boolean)
-    .map((line) => JSON.parse(line) as RouterEvalCase);
+      .map((line) => JSON.parse(line) as RouterEvalCase);
+}
+
+function extractLatestUserRequest(input: string) {
+  const marker = "Latest user request:";
+  const index = input.lastIndexOf(marker);
+  if (index < 0) return input;
+  const latest = input.slice(index + marker.length).trim();
+  return latest || input;
 }
 
 function evaluateCase(testCase: RouterEvalCase, resolution: IntentResolution): CaseResult {
@@ -82,7 +90,9 @@ function evaluateCase(testCase: RouterEvalCase, resolution: IntentResolution): C
 async function main() {
   const cases = readCases(datasetPath);
   const results = await Promise.all(
-    cases.map(async (testCase) => evaluateCase(testCase, await resolveIntent(testCase.input, { useLlm: false })))
+    cases.map(async (testCase) =>
+      evaluateCase(testCase, await resolveIntent(extractLatestUserRequest(testCase.input), { useLlm: false }))
+    )
   );
   const passed = results.filter((result) => result.passed).length;
   const failed = results.length - passed;

@@ -101,6 +101,36 @@ const workflowDefinitions: Record<MicroWorkflowId, WorkflowStepDefinition[]> = {
       allowedActions: ["advance"],
       uiHint: "scenario_comparison"
     }
+  ],
+  retirement_pension_task_orchestration: [
+    {
+      id: "resolve_intent",
+      label: "解析意图",
+      detail: "把用户表达收敛为养老金业务内的具体任务模式。",
+      allowedActions: ["advance"],
+      uiHint: "scenario_comparison"
+    },
+    {
+      id: "load_context",
+      label: "加载上下文",
+      detail: "读取画像和养老金账户等系统已知信息。",
+      allowedActions: ["advance"],
+      uiHint: "scenario_comparison"
+    },
+    {
+      id: "compose_dynamic_steps",
+      label: "动态组装",
+      detail: "根据意图选择资格、影响、时间线或构成分析阶段。",
+      allowedActions: ["advance"],
+      uiHint: "scenario_comparison"
+    },
+    {
+      id: "next_decision_gate",
+      label: "下一步决策",
+      detail: "等待用户选择是否继续进入受控申请或调整方案。",
+      allowedActions: ["advance"],
+      uiHint: "scenario_comparison"
+    }
   ]
 };
 
@@ -178,7 +208,50 @@ function buildPlan(microWorkflowId: MicroWorkflowId, result: AgentReadableResult
     }
   }
 
+  if (microWorkflowId === "retirement_pension_task_orchestration") {
+    const taskPlan = Array.isArray(result.task_plan) ? result.task_plan : [];
+    if (taskPlan.length) {
+      steps.splice(
+        0,
+        steps.length,
+        ...taskPlan.map((stage, index) => {
+          const record = stage as Record<string, unknown>;
+          const stageId = String(record.id ?? `pension_stage_${index + 1}`);
+          return {
+            id: stageId,
+            label: String(record.title ?? `养老金阶段 ${index + 1}`),
+            detail: pensionStageDetail(stageId),
+            allowedActions: ["advance"] as WorkflowActionType[],
+            uiHint: "scenario_comparison" as WorkflowUiHint
+          };
+        })
+      );
+    }
+    const subIntent = String(result.sub_intent ?? "unknown");
+    observations.push({
+      kind: "business_result",
+      summary: `Pension orchestration selected ${subIntent} and assembled ${steps.length} runtime stages.`,
+      evidence: { subIntent, stepIds: steps.map((step) => step.id) }
+    });
+    rationale = `The pension capability narrowed the request to ${subIntent}, then generated a workflow instance from the returned task_plan.`;
+  }
+
   return { steps, observations, rationale };
+}
+
+function pensionStageDetail(stageId: string) {
+  const details: Record<string, string> = {
+    ResolveMemberIntent: "理解你的问题，判断当前是咨询、提取探索还是退休规划。",
+    LoadRetirementProfile: "读取系统已有的年龄、身份和账户状态，不重复询问。",
+    LoadPensionPortfolio: "汇总你的养老金账户和余额。",
+    CheckAccessEligibility: "判断有哪些可探索的提取路径和材料要求。",
+    EstimateWithdrawalImpact: "估算到账金额、余额变化和退休收入影响。",
+    BuildRetirementTimeline: "比较不同退休年龄下的预计领取情况。",
+    CompareClaimStrategies: "比较按月领取和部分一次性领取等方式。",
+    ReviewPensionComposition: "展示养老金各账户构成。",
+    NextDecisionGate: "等待你选择下一步，不会自动提交申请。"
+  };
+  return details[stageId] ?? "继续处理当前养老金任务。";
 }
 
 const workflowStorePath = fileURLToPath(new URL("../.data/workflow-runs.json", import.meta.url));
@@ -187,7 +260,8 @@ const workflowRuns = loadWorkflowRuns();
 const mutableInputFields: Record<MicroWorkflowId, Set<string>> = {
   isa_subscription_feasibility: new Set(["plannedIsaSubscription"]),
   adviser_review_pack_generation: new Set(),
-  retirement_goal_gap_projection: new Set(["desiredContributionRate", "targetRetirementAge"])
+  retirement_goal_gap_projection: new Set(["desiredContributionRate", "targetRetirementAge"]),
+  retirement_pension_task_orchestration: new Set(["pensionTaskIntent", "requestedWithdrawalAmount", "targetRetirementAge"])
 };
 
 function now() {

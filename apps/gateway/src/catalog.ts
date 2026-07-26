@@ -336,6 +336,96 @@ export const capabilities: CapabilityDefinition[] = [
       "Does this client still match the balanced model portfolio?",
       "Create an adviser platform evidence pack for the next review meeting."
     ]
+  },
+  {
+    id: "retirement_pension_task_orchestration",
+    version: "2026.07.1",
+    owner: "Retirement Platform Value Stream",
+    status: "active",
+    name: "养老金/公积金任务编排能力",
+    description:
+      "根据中文养老金或公积金用户意图，在同一业务能力内动态选择资金提取准备、退休领取规划或账户构成分析等受控 micro workflow。",
+    businessOutcome:
+      "一个可审计的资金服务工作区：先收敛用户目标，再按阶段库动态组合画像、账户、资格、到账测算、影响测算和领取策略组件。",
+    requiredApis: [
+      "CN Retirement Profile API",
+      "CN Pension Portfolio API",
+      "CN Withdrawal Eligibility API",
+      "CN Withdrawal Impact API",
+      "CN Retirement Claim Options API"
+    ],
+    inputSchema: {
+      customerId: "string",
+      pensionTaskIntent: "enum optional: cash_access_exploration | retirement_claim_planning | pot_composition",
+      requestedWithdrawalAmount: "number optional",
+      targetRetirementAge: "number optional",
+      microWorkflowId: "enum optional: retirement_pension_task_orchestration"
+    },
+    outputSchema: {
+      summary: "string",
+      workflow_id: "string",
+      task_plan: "array",
+      pension_portfolio: "object",
+      withdrawal_eligibility: "object optional",
+      withdrawal_impact: "object optional",
+      retirement_options: "object optional",
+      next_actions: "array"
+    },
+    dataClassification: "restricted",
+    executionPlan: {
+      mode: "configured_composition",
+      steps: [
+        {
+          id: "resolve_pension_task_intent",
+          type: "policy_check",
+          description: "把模糊中文表达收敛到公积金/养老金资金提取准备、退休领取规划或账户构成分析。"
+        },
+        {
+          id: "load_known_pension_context",
+          type: "api_call",
+          uses: "CN Retirement Profile API + CN Pension Portfolio API",
+          description: "先自动读取系统已知信息，避免把年龄、账户等已有参数重新问用户。"
+        },
+        {
+          id: "compose_task_specific_workflow",
+          type: "api_call",
+          uses: "Workflow-specific subset of eligibility, impact, and claim option APIs",
+          description: "根据任务意图只调用需要的业务 API，并生成可渲染 task_plan。"
+        },
+        {
+          id: "gate_formal_execution",
+          type: "policy_check",
+          description: "提取或领取申请只暴露为下一步受控入口，不在探索/规划模式直接提交。"
+        }
+      ]
+    },
+    routing: {
+      domains: ["养老金", "公积金", "住房公积金", "退休", "养老金提取", "公积金提取", "养老金领取", "pension", "retirement"],
+      keywords: ["养老金", "公积金", "住房公积金", "缺钱", "提取", "取一部分", "退休", "领取", "什么时候退休", "账户构成", "比例"],
+      positiveExamples: [
+        "我最近缺钱，想看看能不能从公积金里取一部分。",
+        "我想提取住房公积金还房贷。",
+        "我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。",
+        "我的养老金中各项比例是多少？",
+        "帮我比较养老金提取和退休领取方案。"
+      ],
+      negativeExamples: [
+        "Can I add money to my ISA?",
+        "Prepare an adviser model portfolio review.",
+        "What is the weather tomorrow?"
+      ],
+      riskLevel: "high"
+    },
+    policy: {
+      dataAccess: "recommendation",
+      requiresCustomerConfirmation: true,
+      auditRequired: true
+    },
+    examplePrompts: [
+      "我最近缺钱，想看看能不能从养老金里取一部分。",
+      "我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。",
+      "我的养老金中各项比例是多少？"
+    ]
   }
 ];
 

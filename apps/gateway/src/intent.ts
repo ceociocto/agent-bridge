@@ -32,10 +32,15 @@ const ruleMatches: RuleMatch[] = [
     capabilityId: "adviser_platform_model_portfolio_review",
     intent: "adviser platform model portfolio review",
     keywords: ["adviser", "advisor", "model portfolio", "suitability", "drift", "review pack", "wealthbuilder"]
+  },
+  {
+    capabilityId: "retirement_pension_task_orchestration",
+    intent: "养老金和公积金任务编排",
+    keywords: ["养老金", "公积金", "住房公积金", "缺钱", "手头紧", "提取", "取", "取钱", "提取公积金", "取一部分", "退休", "领取", "什么时候退休", "账户构成", "比例"]
   }
 ];
 
-const broadFinancialTerms = ["pension", "retirement", "invest", "fund", "portfolio", "client", "money"];
+const broadFinancialTerms = ["pension", "retirement", "invest", "fund", "portfolio", "client", "money", "养老金", "公积金", "退休"];
 const maxIntentSpans = Number(process.env.INTENT_SPAN_MAX ?? 8);
 const minSpanLength = 12;
 
@@ -100,6 +105,54 @@ function scoreRules(prompt: string) {
       score: match.keywords.filter((keyword) => lower.includes(keyword)).length
     }))
     .sort((a, b) => b.score - a.score);
+}
+
+function hasPensionFundTerm(prompt: string) {
+  return /(?:公积金|住房公积金|养老金)/iu.test(prompt);
+}
+
+function hasPensionAccessAction(prompt: string) {
+  return /(?:提取|取|取钱|取出来|取一部分|拿出来|还房贷|cash access|withdraw)/iu.test(prompt);
+}
+
+function hasPensionAccessNegation(prompt: string) {
+  return /(?:不要|不想|不用|别|无需|暂不|先不|不要帮我|别帮我|取消)\s*(?:帮我)?\s*(?:提取|取钱|取出来|取一部分|拿出来|取)?\s*(?:一些|一下|部分)?\s*(?:公积金|住房公积金|养老金)?/iu.test(prompt);
+}
+
+function hasNegationCancellation(prompt: string) {
+  return /(?:不是|并非)\s*(?:不要|不想|不用|别|无需|暂不|先不|取消)/iu.test(prompt);
+}
+
+function resolvePensionNoActionGuard(prompt: string): IntentResolution | null {
+  if (!hasPensionFundTerm(prompt) || !hasPensionAccessNegation(prompt) || hasNegationCancellation(prompt)) {
+    return null;
+  }
+
+  return {
+    status: "unsupported",
+    intent: "no actionable pension or housing fund request",
+    confidence: 0.9,
+    reasoning:
+      "The request mentions pension/housing fund access but is explicitly negated, so the gateway did not start a withdrawal workflow.",
+    resolver: "rules",
+    availableCapabilities
+  };
+}
+
+function resolvePensionAmbiguityGuard(prompt: string): IntentResolution | null {
+  if (!hasPensionFundTerm(prompt) || hasPensionAccessAction(prompt)) return null;
+  if (/(?:退休|领取|什么时候退休|比例|组成|构成|分布|配置)/iu.test(prompt)) return null;
+
+  return {
+    status: "needs_clarification",
+    intent: "ambiguous pension or housing fund request",
+    confidence: 0.48,
+    reasoning:
+      "The request mentions pension/housing funds but does not state whether the user wants withdrawal, account composition, or retirement planning.",
+    resolver: "rules",
+    questions: ["你是想提取公积金、查看账户构成，还是咨询退休/领取方案？"],
+    availableCapabilities
+  };
 }
 
 function normalizePromptForRouting(prompt: string) {
@@ -212,6 +265,9 @@ function resolveRulesGuard(prompt: string): IntentResolution | null {
   const scored = scoreRules(prompt);
   const top = scored[0];
   const runnerUp = scored[1];
+  const matchedCapabilities = scored.filter((match) => match.score > 0);
+  const hasExplicitMultiIntentConnector =
+    /(?:also|separately|at the same time|as well as|plus|另外|同时|分别|顺便)/iu.test(prompt);
 
   if (top && top.score > 0 && runnerUp && runnerUp.score === top.score) {
     return {
@@ -222,6 +278,37 @@ function resolveRulesGuard(prompt: string): IntentResolution | null {
       resolver: "rules",
       questions: [`Is this primarily about ${top.intent} or ${runnerUp.intent}?`],
       availableCapabilities
+    };
+  }
+
+  if (hasExplicitMultiIntentConnector && matchedCapabilities.length >= 2) {
+    return {
+      status: "needs_clarification",
+      intent: "multi-intent financial services request",
+      confidence: 0.56,
+      reasoning: `The request contains signals for multiple capabilities (${matchedCapabilities
+        .slice(0, 3)
+        .map((match) => match.intent)
+        .join(", ")}); the gateway will not auto-compose regulated workflows without confirmation.`,
+      resolver: "rules",
+      questions: [
+        `Which request should I handle first: ${matchedCapabilities
+          .slice(0, 3)
+          .map((match) => match.intent)
+          .join(", ")}?`
+      ],
+      availableCapabilities: matchedCapabilities.map((match) => match.capabilityId)
+    };
+  }
+
+  if (top?.score && top.score >= 2) {
+    return {
+      status: "resolved",
+      intent: top.intent,
+      capabilityId: top.capabilityId,
+      confidence: Math.min(0.96, 0.72 + top.score * 0.04),
+      reasoning: `Deterministic rules matched ${top.score} capability-specific terms for ${top.intent}.`,
+      resolver: "rules"
     };
   }
 
@@ -341,6 +428,32 @@ export async function resolveIntent(prompt: string, options: { useLlm?: boolean 
         status: "unsupported",
         detail: outOfDomain.reasoning,
         confidence: outOfDomain.confidence
+      }
+    ]);
+  }
+
+  const pensionNoAction = resolvePensionNoActionGuard(routingPrompt);
+  if (pensionNoAction) {
+    return withTrace(pensionNoAction, [
+      ...routingTrace,
+      {
+        layer: "rules_guard",
+        status: "unsupported",
+        detail: pensionNoAction.reasoning,
+        confidence: pensionNoAction.confidence
+      }
+    ]);
+  }
+
+  const pensionAmbiguity = resolvePensionAmbiguityGuard(routingPrompt);
+  if (pensionAmbiguity) {
+    return withTrace(pensionAmbiguity, [
+      ...routingTrace,
+      {
+        layer: "rules_guard",
+        status: "needs_clarification",
+        detail: pensionAmbiguity.reasoning,
+        confidence: pensionAmbiguity.confidence
       }
     ]);
   }
