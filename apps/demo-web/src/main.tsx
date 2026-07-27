@@ -84,7 +84,7 @@ type AgentResponse = {
     capabilityId?: string;
     confidence: number;
     reasoning: string;
-    resolver?: "llm" | "rules" | "semantic" | "fallback";
+    resolver?: "llm" | "rules" | "semantic" | "hybrid" | "intent_frame" | "workflow_turn" | "fallback";
     questions?: string[];
     availableCapabilities?: string[];
     policyDecision?: { name: string; status: string; detail: string };
@@ -904,7 +904,22 @@ function createLocalPensionAgentResponse(workflow: AgenticWorkflow, prompt: stri
   };
 }
 
-function buildConversationPrompt(history: AgenticChatTurn[], question: string, condensedIntent: string) {
+function isPensionCancellationFollowUp(question: string) {
+  return /(?:不取了|不提取了|不想取了|不想提取了|先不取|暂不取|取消|算了|不用了)/iu.test(question);
+}
+
+function routingQuestionForWorkflow(question: string, workflow: AgenticWorkflow) {
+  if (isPensionCancellationFollowUp(question)) return question;
+  if (workflow.id === "pension-cash-access") {
+    return `在当前公积金提取任务中，${question}`;
+  }
+  if (workflow.id === "pension-retirement-choice") {
+    return `在当前养老金退休规划任务中，${question}`;
+  }
+  return question;
+}
+
+function buildConversationPrompt(history: AgenticChatTurn[], question: string, condensedIntent: string, workflow: AgenticWorkflow) {
   const compactHistory = history
     .slice(-6)
     .map((turn) => `${turn.role === "user" ? "User" : "Assistant"}: ${turn.text}`)
@@ -913,7 +928,7 @@ function buildConversationPrompt(history: AgenticChatTurn[], question: string, c
   return [
     compactHistory ? `Prior conversation:\n${compactHistory}` : "",
     `Current condensed intent: ${condensedIntent}`,
-    `Latest user request: ${question}`
+    `Latest user request: ${routingQuestionForWorkflow(question, workflow)}`
   ].filter(Boolean).join("\n\n");
 }
 
@@ -1334,6 +1349,34 @@ type PensionIntentScenario = {
   workspaceHint: string;
 };
 
+type PensionTaskPlanStage = {
+  id: string;
+  title: string;
+  source?: string;
+  microWorkflow?: string;
+  component: string;
+};
+
+type PensionWorkspaceContext = {
+  result: Record<string, unknown>;
+  stage: PensionTaskPlanStage;
+  flowState: PensionFlowState;
+  setFlowState: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+  routeOptions: Array<Record<string, unknown>>;
+  selectedRoute: string;
+  selectedRouteRecord: Record<string, unknown>;
+  setSelectedRoute: React.Dispatch<React.SetStateAction<string>>;
+  routeHint: ReturnType<typeof selectedPensionRouteHint>;
+  requestedAmountValue: number;
+  effectiveAmountValue: number;
+  requestedAmount: string;
+  originalRequestedAmount: string;
+  estimatedNet: string;
+  amountCappedByRoute: boolean;
+  blockedByLimit: boolean;
+  routeMaxAmount?: number;
+};
+
 const pensionStageLibrary: Record<PensionIntentStageId, PensionIntentStage> = {
   ResolveMemberIntent: {
     id: "ResolveMemberIntent",
@@ -1582,22 +1625,57 @@ function ChinesePensionIntentLab() {
 
 function PensionCashAccessWorkspace({
   result = {},
+  flowState = { stage: "decision", selectedAction: "confirm_withdrawal_reason" },
   setFlowState
 }: {
   result?: Record<string, unknown>;
+  flowState?: PensionFlowState;
   setFlowState?: React.Dispatch<React.SetStateAction<PensionFlowState>>;
 }) {
+  if (!setFlowState) {
+    return <PensionTaskPlanWorkspace result={result} flowState={flowState} setFlowState={() => undefined} />;
+  }
+  return <PensionTaskPlanWorkspace result={result} flowState={flowState} setFlowState={setFlowState} />;
+}
+
+function extractPensionTaskPlan(result: Record<string, unknown>, fallbackComponents: string[]): PensionTaskPlanStage[] {
+  const taskPlan = Array.isArray(result.task_plan) ? result.task_plan as Array<Record<string, unknown>> : [];
+  if (taskPlan.length) {
+    return taskPlan.map((stage, index) => ({
+      id: String(stage.id ?? `pension-stage-${index + 1}`),
+      title: String(stage.title ?? stage.component ?? `业务阶段 ${index + 1}`),
+      source: stage.source ? String(stage.source) : undefined,
+      microWorkflow: stage.microWorkflow ? String(stage.microWorkflow) : undefined,
+      component: String(stage.component ?? "DecisionGate")
+    }));
+  }
+
+  return fallbackComponents.map((component, index) => ({
+    id: `fallback-${component}-${index + 1}`,
+    title: component,
+    component
+  }));
+}
+
+function PensionTaskPlanWorkspace({
+  result = {},
+  flowState,
+  setFlowState
+}: {
+  result?: Record<string, unknown>;
+  flowState?: PensionFlowState;
+  setFlowState: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+}) {
+  const currentFlowState = flowState ?? { stage: "decision", selectedAction: "confirm_withdrawal_reason" };
   const eligibility = result.withdrawal_eligibility as Record<string, unknown> | undefined;
   const impact = result.withdrawal_impact as Record<string, unknown> | undefined;
   const limitCheck = result.limit_check as Record<string, unknown> | undefined;
-  const member = result.member_context as Record<string, unknown> | undefined;
-  const portfolio = result.pension_portfolio as Record<string, unknown> | undefined;
   const routes = Array.isArray(eligibility?.routes) ? eligibility.routes as Array<Record<string, unknown>> : [];
   const routeOptions = routes.length ? routes : [
     { label: "住房公积金提取", maximum_amount: "¥120,000", required_evidence: ["主要住房声明", "贷款余额证明"], manual_review_required: false },
     { label: "困难救济提取", maximum_amount: "¥50,000", required_evidence: ["经济困难证明", "收入变化说明"], manual_review_required: true }
   ];
-  const [selectedRoute, setSelectedRoute] = useState(String(routeOptions[0]?.label ?? ""));
+  const [selectedRoute, setSelectedRoute] = useState(String(currentFlowState.selectedRouteLabel ?? routeOptions[0]?.label ?? ""));
   const selectedRouteRecord = routeOptions.find((route) => String(route.label) === selectedRoute) ?? routeOptions[0];
   const routeHint = selectedPensionRouteHint(selectedRoute);
   const blockedByLimit = limitCheck?.status === "blocked";
@@ -1614,120 +1692,266 @@ function PensionCashAccessWorkspace({
   const estimatedNet = amountCappedByRoute
     ? estimateNetRange(effectiveAmountValue)
     : String(impact?.estimated_net ?? "¥92,000 - ¥95,000");
+  const stages = extractPensionTaskPlan(result, ["IntentSummary", "EligibilityRoutes", "ImpactPreview", "DecisionGate"]);
+  const renderableStages = stages.filter((stage) => pensionComponentRegistry[stage.component] ?? pensionComponentRegistry[getPensionComponentAlias(stage.component)]);
+  const context: PensionWorkspaceContext = {
+    result,
+    stage: renderableStages[0] ?? stages[0] ?? { id: "empty", title: "任务工作区", component: "IntentSummary" },
+    flowState: currentFlowState,
+    setFlowState,
+    routeOptions,
+    selectedRoute,
+    selectedRouteRecord,
+    setSelectedRoute,
+    routeHint,
+    requestedAmountValue,
+    effectiveAmountValue,
+    requestedAmount,
+    originalRequestedAmount,
+    estimatedNet,
+    amountCappedByRoute,
+    blockedByLimit,
+    routeMaxAmount
+  };
+
   return (
     <>
-      <section className="pension-outcome-card">
+      {renderableStages.map((stage) => {
+        const componentName = getPensionComponentAlias(stage.component);
+        const Component = pensionComponentRegistry[componentName];
+        if (!Component) return null;
+        return <Component key={stage.id} {...context} stage={stage} />;
+      })}
+    </>
+  );
+}
+
+function getPensionComponentAlias(component: string) {
+  const aliases: Record<string, string> = {
+    RouteCards: "EligibilityRoutes",
+    AuthorizationGate: "DecisionGate",
+    NextDecisionGate: "DecisionGate"
+  };
+  return aliases[component] ?? component;
+}
+
+function PensionStageFrame({
+  context,
+  eyebrow,
+  title,
+  icon,
+  children
+}: {
+  context: PensionWorkspaceContext;
+  eyebrow?: string;
+  title?: string;
+  icon: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  return (
+    <section className="pension-business-section" data-stage={context.stage.id}>
+      <div className="pension-section-head">
         <div>
-          <span>你的目标</span>
-          <h3>从公积金账户提取 {requestedAmount}</h3>
-          <p>{blockedByLimit ? "系统已经替你检查可行路径，但目标金额超过当前政策上限，不能继续提交申请。" : "系统已经替你读取账户、匹配可行路径并完成到账估算。现在还没有提交申请。"}</p>
+          <span>{eyebrow ?? context.stage.microWorkflow ?? "动态阶段"}</span>
+          <h4>{title ?? context.stage.title}</h4>
+        </div>
+        {icon}
+      </div>
+      {children}
+    </section>
+  );
+}
+
+function PensionIntentSummaryStage(context: PensionWorkspaceContext) {
+  const customer = context.result.customer as Record<string, unknown> | undefined;
+  const limitCheck = context.result.limit_check as Record<string, unknown> | undefined;
+  return (
+    <>
+      <section className="pension-outcome-card" data-stage={context.stage.id}>
+        <div>
+          <span>意图已收敛</span>
+          <h3>从公积金账户提取 {context.requestedAmount}</h3>
+          <p>{context.blockedByLimit ? "系统已检查所有可行路径，目标金额超过当前政策上限，不能继续进入申请。" : "系统已把模糊资金需求收敛为提取探索任务；当前只测算方案，尚未创建正式申请。"}</p>
         </div>
         <div className="pension-outcome-amount">
-          <span>{blockedByLimit ? "当前状态" : "预计到账"}</span>
-          <strong>{blockedByLimit ? "无法继续" : estimatedNet}</strong>
-          <small>{blockedByLimit ? `最高可申请 ${String(limitCheck?.maximum_supported_amount ?? "¥120,000")}` : "收款账户：已验证"}</small>
+          <span>{context.blockedByLimit ? "当前状态" : "办理状态"}</span>
+          <strong>{context.blockedByLimit ? "无法继续" : "未提交"}</strong>
+          <small>{context.blockedByLimit ? `最高可申请 ${String(limitCheck?.maximum_supported_amount ?? "¥120,000")}` : `会员：${String(customer?.name ?? "陈女士")}`}</small>
         </div>
       </section>
 
-      {blockedByLimit ? (
+      {context.blockedByLimit ? (
         <section className="pension-limit-block">
           <ShieldAlert size={20} />
           <div>
             <strong>目标金额超过所有可行路径上限</strong>
             <p>
-              你输入的是 {String(limitCheck?.requested_amount ?? originalRequestedAmount)}，
+              你输入的是 {String(limitCheck?.requested_amount ?? context.originalRequestedAmount)}，
               当前最高可申请 {String(limitCheck?.maximum_supported_amount ?? "¥120,000")}。
-              请在右侧把金额改到上限以内，或先查看可行路径。
+              请把金额改到上限以内，或先查看可行路径。
             </p>
           </div>
         </section>
       ) : null}
-
-
-      <section className="pension-business-section">
-        <div className="pension-section-head">
-          <div>
-            <span>需要你亲自判断</span>
-            <h4>选择真实用途，系统会据此裁剪后续流程</h4>
-          </div>
-          <ClipboardList size={19} />
-        </div>
-        <div className="pension-route-grid">
-          {routeOptions.map((route) => (
-            <button
-              type="button"
-              className={String(route.label) === selectedRoute ? "ready selected" : ""}
-              key={String(route.label)}
-              onClick={() => {
-                const routeLabel = String(route.label);
-                setSelectedRoute(routeLabel);
-                setFlowState?.((current) => ({
-                  ...current,
-                  stage: "purpose",
-                  selectedAction: "confirm_withdrawal_reason",
-                  selectedRouteLabel: routeLabel,
-                  routeMaxAmount: parseYuanAmount(route.maximum_amount)
-                }));
-              }}
-            >
-              <span>{route.manual_review_required ? "需要人工审核" : "可继续探索"}</span>
-              <strong>{String(route.label)}</strong>
-              <p>最高 {String(route.maximum_amount)} · {Array.isArray(route.required_evidence) ? route.required_evidence.join("、") : "需要补充材料"}</p>
-            </button>
-          ))}
-        </div>
-        <div className="pension-selected-note">
-          <div>
-            <strong>已选择：{selectedRoute}</strong>
-            <span>{routeHint.emphasis}</span>
-            {amountCappedByRoute ? <span>原目标 {originalRequestedAmount} 超过该路径上限，后续申请将按 {requestedAmount} 继续。</span> : null}
-          </div>
-          {setFlowState && !blockedByLimit ? (
-            <button
-              type="button"
-              onClick={() => setFlowState({
-                selectedAction: "start_controlled_application",
-                stage: "application",
-                selectedRouteLabel: selectedRoute,
-                routeMaxAmount
-              })}
-            >
-              用这个用途继续
-            </button>
-          ) : null}
-        </div>
-      </section>
-
-      <section className="pension-business-section">
-        <div className="pension-section-head">
-          <div>
-            <span>提取 {requestedAmount} 的结果</span>
-            <h4>先看到账金额和长期影响，再决定是否申请</h4>
-          </div>
-          <Gauge size={19} />
-        </div>
-        <div className="pension-impact-grid">
-          <article>
-            <span>预计到账</span>
-            <strong>{estimatedNet}</strong>
-          </article>
-          <article>
-            <span>长期权益影响</span>
-            <strong>-{String(impact?.monthly_income_reduction ?? "¥620")}</strong>
-          </article>
-          <article>
-            <span>预计处理</span>
-            <strong>3-5 个工作日</strong>
-          </article>
-        </div>
-        <p className="pension-section-note">
-          {routeHint.detail}
-          {selectedRouteRecord?.manual_review_required ? " 这个方向通常会多一步材料审核。" : " 如果资料已在系统中，后续步骤会自动跳过重复填写。"}
-        </p>
-      </section>
     </>
   );
 }
+
+function PensionKnownFactsStage(context: PensionWorkspaceContext) {
+  const customer = context.result.customer as Record<string, unknown> | undefined;
+  const portfolio = context.result.pension_portfolio as Record<string, unknown> | undefined;
+  return (
+    <PensionStageFrame context={context} eyebrow="自动补全资料" title="系统先读取已知资料，不重复询问" icon={<Database size={19} />}>
+      <div className="pension-readiness-grid">
+        <article>
+          <span>身份状态</span>
+          <strong>{String(customer?.identity_status ?? "verified")}</strong>
+          <p>用于判断是否可以进入强校验。</p>
+        </article>
+        <article>
+          <span>收款账户</span>
+          <strong>{String(customer?.verified_bank_account ?? "已验证")}</strong>
+          <p>正式申请前仍需最终授权。</p>
+        </article>
+        <article>
+          <span>账户总额</span>
+          <strong>{String(portfolio?.total_balance ?? "已读取")}</strong>
+          <p>后续测算基于当前账户快照。</p>
+        </article>
+      </div>
+    </PensionStageFrame>
+  );
+}
+
+function PensionAccountStripStage(context: PensionWorkspaceContext) {
+  const portfolio = context.result.pension_portfolio as Record<string, unknown> | undefined;
+  const accounts = Array.isArray(portfolio?.accounts) ? portfolio.accounts as Array<Record<string, unknown>> : [];
+  return (
+    <PensionStageFrame context={context} eyebrow="账户上下文" title="账户构成作为后续测算输入" icon={<Landmark size={19} />}>
+      <div className="pension-route-grid">
+        {accounts.length ? accounts.map((account) => (
+          <article className="ready" key={String(account.label)}>
+            <span>{String(account.ratio ?? "账户")}</span>
+            <strong>{String(account.label)}</strong>
+            <p>当前余额 {String(account.balance ?? "已读取")}</p>
+          </article>
+        )) : (
+          <article className="ready">
+            <span>已连接</span>
+            <strong>公积金账户</strong>
+            <p>账户明细会作为资格和到账测算输入。</p>
+          </article>
+        )}
+      </div>
+    </PensionStageFrame>
+  );
+}
+
+function PensionEligibilityRoutesStage(context: PensionWorkspaceContext) {
+  return (
+    <PensionStageFrame context={context} eyebrow="需要你亲自判断" title="选择真实用途，后续流程会按选择裁剪" icon={<ClipboardList size={19} />}>
+      <div className="pension-route-grid">
+        {context.routeOptions.map((route) => (
+          <button
+            type="button"
+            className={String(route.label) === context.selectedRoute ? "ready selected" : ""}
+            key={String(route.label)}
+            onClick={() => {
+              const routeLabel = String(route.label);
+              const nextRouteMaxAmount = parseYuanAmount(route.maximum_amount);
+              context.setSelectedRoute(routeLabel);
+              context.setFlowState((current) => ({
+                ...current,
+                stage: "purpose",
+                selectedAction: "confirm_withdrawal_reason",
+                selectedRouteLabel: routeLabel,
+                routeMaxAmount: nextRouteMaxAmount
+              }));
+            }}
+          >
+            <span>{route.manual_review_required ? "需要人工审核" : "可继续探索"}</span>
+            <strong>{String(route.label)}</strong>
+            <p>最高 {String(route.maximum_amount)} · {Array.isArray(route.required_evidence) ? route.required_evidence.join("、") : "需要补充材料"}</p>
+          </button>
+        ))}
+      </div>
+      <div className="pension-selected-note">
+        <div>
+          <strong>已选择：{context.selectedRoute}</strong>
+          <span>{context.routeHint.emphasis}</span>
+          {context.amountCappedByRoute ? <span>原目标 {context.originalRequestedAmount} 超过该路径上限，后续申请将按 {context.requestedAmount} 继续。</span> : null}
+        </div>
+      </div>
+    </PensionStageFrame>
+  );
+}
+
+function PensionImpactPreviewStage(context: PensionWorkspaceContext) {
+  const impact = context.result.withdrawal_impact as Record<string, unknown> | undefined;
+  return (
+    <PensionStageFrame context={context} eyebrow={`提取 ${context.requestedAmount} 的结果`} title="先看到账金额和长期影响，再决定是否申请" icon={<Gauge size={19} />}>
+      <div className="pension-impact-grid">
+        <article>
+          <span>预计到账</span>
+          <strong>{context.estimatedNet}</strong>
+        </article>
+        <article>
+          <span>长期权益影响</span>
+          <strong>-{String(impact?.monthly_income_reduction ?? "¥620")}</strong>
+        </article>
+        <article>
+          <span>预计处理</span>
+          <strong>3-5 个工作日</strong>
+        </article>
+      </div>
+      <p className="pension-section-note">
+        {context.routeHint.detail}
+        {context.selectedRouteRecord?.manual_review_required ? " 这个方向通常会多一步材料审核。" : " 如果资料已在系统中，后续步骤会自动跳过重复填写。"}
+      </p>
+    </PensionStageFrame>
+  );
+}
+
+function PensionDecisionGateStage(context: PensionWorkspaceContext) {
+  return (
+    <PensionNextActions
+      result={context.result}
+      flowState={context.flowState}
+      setFlowState={context.setFlowState}
+      selectedRouteLabel={context.selectedRoute}
+      routeMaxAmount={context.routeMaxAmount}
+    />
+  );
+}
+
+function PensionWorkflowStateStage(context: PensionWorkspaceContext) {
+  const workflowState = context.result.workflow_state as Record<string, unknown> | undefined;
+  const cancelled = workflowState?.status === "cancelled";
+  return (
+    <section className="pension-outcome-card" data-stage={context.stage.id}>
+      <div>
+        <span>{cancelled ? "任务已停止" : "任务已暂停"}</span>
+        <h3>{cancelled ? "本次不会提取公积金" : "当前工作流等待下一步"}</h3>
+        <p>{String(context.result.summary ?? "当前工作流状态已更新。")}</p>
+      </div>
+      <div className="pension-outcome-amount">
+        <span>办理状态</span>
+        <strong>{cancelled ? "未提交" : "已暂停"}</strong>
+        <small>{cancelled ? "没有创建申请" : "没有新的资金动作"}</small>
+      </div>
+    </section>
+  );
+}
+
+const pensionComponentRegistry: Record<string, (context: PensionWorkspaceContext) => React.ReactElement | null> = {
+  IntentSummary: PensionIntentSummaryStage,
+  KnownFacts: PensionKnownFactsStage,
+  AccountStrip: PensionAccountStripStage,
+  EligibilityRoutes: PensionEligibilityRoutesStage,
+  ImpactPreview: PensionImpactPreviewStage,
+  DecisionGate: PensionDecisionGateStage,
+  WorkflowState: PensionWorkflowStateStage
+};
 
 function PensionRetirementChoiceWorkspace({ result = {} }: { result?: Record<string, unknown> }) {
   const retirementOptions = result.retirement_options as Record<string, unknown> | undefined;
@@ -1811,19 +2035,27 @@ function PensionRetirementChoiceWorkspace({ result = {} }: { result?: Record<str
 function PensionNextActions({
   result = {},
   flowState,
-  setFlowState
+  setFlowState,
+  selectedRouteLabel,
+  routeMaxAmount
 }: {
   result?: Record<string, unknown>;
   flowState: PensionFlowState;
   setFlowState: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+  selectedRouteLabel?: string;
+  routeMaxAmount?: number;
 }) {
   const actions = Array.isArray(result.next_actions) ? result.next_actions as Array<Record<string, unknown>> : [];
   if (!actions.length) return null;
+  const visibleActions = selectedRouteLabel
+    ? actions.filter((action) => String(action.action ?? action.id ?? "") !== "confirm_withdrawal_reason")
+    : actions;
+  const detailActionId = flowState.selectedAction || String(visibleActions[0]?.action ?? visibleActions[0]?.id ?? actions[0]?.action ?? actions[0]?.id ?? "");
 
   const labels: Record<string, { title: string; detail: string }> = {
     confirm_withdrawal_reason: {
       title: "确认提取原因",
-      detail: "继续收敛到住房相关提取、困难救济或仅咨询。"
+      detail: "真实用途已在上一步选择，后续只会基于这个用途继续。"
     },
     compare_lower_impact_options: {
       title: "比较低影响方案",
@@ -1865,7 +2097,7 @@ function PensionNextActions({
         <GitBranch size={19} />
       </div>
       <div className="pension-action-grid">
-        {actions.map((action, index) => {
+        {visibleActions.map((action, index) => {
           const actionId = String(action.action ?? action.id ?? "next_action");
           const text = labels[actionId] ?? {
             title: actionId.replaceAll("_", " "),
@@ -1881,6 +2113,8 @@ function PensionNextActions({
               onClick={() => setFlowState((current) => ({
                 ...current,
                 selectedAction: actionId,
+                selectedRouteLabel: selectedRouteLabel ?? current.selectedRouteLabel,
+                routeMaxAmount: routeMaxAmount ?? current.routeMaxAmount,
                 stage: actionId === "compare_lower_impact_options" || actionId === "compare_available_routes"
                   ? "compare"
                   : actionId === "start_controlled_application"
@@ -1896,14 +2130,17 @@ function PensionNextActions({
         })}
       </div>
       <p className="pension-section-note">
+        {selectedRouteLabel ? `当前用途：${selectedRouteLabel}。` : ""}
         这些选择会继续缩小任务范围；只有进入受控申请后，才会出现条款确认、身份验证和最终授权。
       </p>
       <PensionActionDetail
-        actionId={flowState.selectedAction || String(actions[0]?.action ?? actions[0]?.id ?? "")}
+        actionId={detailActionId}
         result={result}
         flowState={flowState}
         flowStage={flowState.stage}
         setFlowState={setFlowState}
+        selectedRouteLabel={selectedRouteLabel}
+        routeMaxAmount={routeMaxAmount}
       />
     </section>
   );
@@ -1914,21 +2151,26 @@ function PensionActionDetail({
   result,
   flowState,
   flowStage,
-  setFlowState
+  setFlowState,
+  selectedRouteLabel,
+  routeMaxAmount
 }: {
   actionId: string;
   result: Record<string, unknown>;
   flowState: PensionFlowState;
   flowStage: PensionFlowState["stage"];
   setFlowState: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+  selectedRouteLabel?: string;
+  routeMaxAmount?: number;
 }) {
   const impact = result.withdrawal_impact as Record<string, unknown> | undefined;
   const limitCheck = result.limit_check as Record<string, unknown> | undefined;
   const blockedByLimit = limitCheck?.status === "blocked";
   const requestedAmountValue = parseYuanAmount(impact?.requested_amount) ?? 100000;
-  const routeMaxAmount = flowState.routeMaxAmount;
-  const cappedByRoute = Number.isFinite(routeMaxAmount) && requestedAmountValue > Number(routeMaxAmount);
-  const effectiveAmount = cappedByRoute ? Number(routeMaxAmount) : requestedAmountValue;
+  const effectiveRouteMaxAmount = routeMaxAmount ?? flowState.routeMaxAmount;
+  const routeLabel = selectedRouteLabel ?? flowState.selectedRouteLabel ?? "已选择用途";
+  const cappedByRoute = Number.isFinite(effectiveRouteMaxAmount) && requestedAmountValue > Number(effectiveRouteMaxAmount);
+  const effectiveAmount = cappedByRoute ? Number(effectiveRouteMaxAmount) : requestedAmountValue;
   const amount = formatYuanAmount(effectiveAmount);
   const originalAmount = formatYuanAmount(requestedAmountValue);
   const net = cappedByRoute ? estimateNetRange(effectiveAmount) : String(impact?.estimated_net ?? "¥92,000 - ¥95,000");
@@ -1986,7 +2228,7 @@ function PensionActionDetail({
         </div>
         <ol className="pension-application-flow">
           <li className="done"><strong>目标和金额</strong><span>提取 {amount}，预计到账 {net}</span></li>
-          <li className="done"><strong>可行路径</strong><span>住房公积金提取优先，困难救济作为备选</span></li>
+          <li className="done"><strong>真实用途</strong><span>{routeLabel}</span></li>
           <li className={flowStage === "application" ? "current" : "done"}><strong>条款确认</strong><span>确认用途、材料真实性和到账金额可能变化</span></li>
           <li className={flowStage === "identity" ? "current" : flowStage === "authorization" || flowStage === "submitted" ? "done" : ""}><strong>身份验证</strong><span>强身份校验后才允许提交</span></li>
           <li className={flowStage === "authorization" ? "current" : flowStage === "submitted" ? "done" : ""}><strong>最终授权</strong><span>用户确认后才创建正式申请</span></li>
@@ -2010,14 +2252,10 @@ function PensionActionDetail({
   return (
     <div className="pension-flow-panel">
       <div>
-        <span>下一步已收敛</span>
-        <h4>先确认真实用途，再自动裁剪材料和审核步骤</h4>
+        <span>用途已收敛</span>
+        <h4>{routeLabel}</h4>
+        <p className="pension-section-note">后续材料、审核方式和授权步骤会按这个用途裁剪；尚未创建正式申请。</p>
       </div>
-      <ol className="pension-application-flow compact">
-        <li className="current"><button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "application" }))}><strong>住房用途</strong><span>房贷、租房或主要住房相关资金需求</span></button></li>
-        <li><button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_application", stage: "application", selectedRouteLabel: "困难救济提取", routeMaxAmount: 50000 }))}><strong>困难救济</strong><span>收入变化、医疗或短期生活困难</span></button></li>
-        <li><button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "confirm_withdrawal_reason", stage: "decision" }))}><strong>仅咨询</strong><span>保存测算，不创建申请</span></button></li>
-      </ol>
     </div>
   );
 }
@@ -2186,7 +2424,7 @@ function AgenticWebPage() {
     const nextCondensedIntent = shouldInvokeWorkflow
       ? buildCondensedIntent(priorConversation, question, inferredWorkflow)
       : "需要更多信息才能选择业务";
-    const conversationPrompt = buildConversationPrompt(priorConversation, question, nextCondensedIntent);
+    const conversationPrompt = buildConversationPrompt(priorConversation, question, nextCondensedIntent, inferredWorkflow);
     const desiredContribution = Number(inferredWorkflow.input.desiredContributionRate ?? 10);
     const desiredRetirementAge = Number(inferredWorkflow.input.targetRetirementAge ?? 65);
     const promptContribution = extractContributionRateFromPrompt(conversationPrompt);
@@ -2197,6 +2435,22 @@ function AgenticWebPage() {
     const submittedWithdrawalAmount = inferredWorkflow.id === "pension-cash-access"
       ? promptWithdrawalAmount ?? (isRerunOfCurrentWorkflow ? withdrawalAmount : Number(inferredWorkflow.input.requestedWithdrawalAmount ?? 100000))
       : withdrawalAmount;
+    const activeWorkflowTurn = workspaceStarted && renderedWorkflow.capabilityId
+      ? {
+          workflowId: renderedWorkflow.id,
+          workflowRunId: workflowRun?.id,
+          microWorkflowId: renderedWorkflow.microWorkflow,
+          capabilityId: renderedWorkflow.capabilityId,
+          currentInput: {
+            ...renderedWorkflow.input,
+            ...(renderedWorkflow.id === "pension-cash-access" ? { requestedWithdrawalAmount: withdrawalAmount } : {}),
+            ...(renderedWorkflow.domain === "Workplace Investing" ? {
+              desiredContributionRate: contributionRate,
+              targetRetirementAge: retirementAge
+            } : {})
+          }
+        }
+      : undefined;
     const userTurn: AgenticChatTurn = {
       id: `user-${Date.now()}`,
       role: "user",
@@ -2295,7 +2549,8 @@ function AgenticWebPage() {
       const data = await runAguiRequest(
         {
           ...input,
-          prompt: conversationPrompt
+          prompt: conversationPrompt,
+          ...(activeWorkflowTurn ? { activeWorkflow: activeWorkflowTurn } : {})
         },
         (streamEvent) => {
           setEvents((current) => [
@@ -2896,8 +3151,7 @@ function GeneratedBusinessWorkspace({
 
       {!loading && workflow.id === "pension-cash-access" ? (
         <>
-          <PensionCashAccessWorkspace result={result} setFlowState={setPensionFlowState} />
-          <PensionNextActions result={result} flowState={pensionFlowState} setFlowState={setPensionFlowState} />
+          <PensionCashAccessWorkspace result={result} flowState={pensionFlowState} setFlowState={setPensionFlowState} />
         </>
       ) : null}
 

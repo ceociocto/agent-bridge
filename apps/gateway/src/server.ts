@@ -2,8 +2,12 @@ import { loadLocalEnv } from "./env.js";
 import cors from "cors";
 import express from "express";
 import {
+  type ActiveWorkflowTurn,
+  type AgentReadableResult,
+  type CapabilityId,
   capabilityInvokeSchema,
   microWorkflowIds,
+  type WorkflowTurnInterpretation,
   workflowActionSchema,
   type MicroWorkflowId
 } from "@agent-bridge/shared";
@@ -41,6 +45,163 @@ function extractLatestUserRequest(prompt: string) {
   if (index < 0) return prompt;
   const latest = prompt.slice(index + marker.length).trim();
   return latest || prompt;
+}
+
+function isCancellationFollowUp(prompt: string) {
+  return /(?:不取了|不提取了|不想取了|不想提取了|先不取|暂不取|取消|算了|不用了)/iu.test(prompt);
+}
+
+function enrichRoutingPromptFromBody(prompt: string, body: Record<string, unknown>) {
+  if (body.microWorkflowId !== "retirement_pension_task_orchestration") return prompt;
+  if (isCancellationFollowUp(prompt)) return prompt;
+  if (/(?:公积金|住房公积金|养老金|退休)/iu.test(prompt)) return prompt;
+
+  if (body.pensionTaskIntent === "cash_access_exploration") {
+    return `在当前公积金提取任务中，${prompt}`;
+  }
+  if (body.pensionTaskIntent === "retirement_claim_planning") {
+    return `在当前养老金退休规划任务中，${prompt}`;
+  }
+  if (body.pensionTaskIntent === "pot_composition") {
+    return `在当前养老金账户构成任务中，${prompt}`;
+  }
+  return prompt;
+}
+
+function parseActiveWorkflowTurn(value: unknown): ActiveWorkflowTurn | null {
+  if (!value || typeof value !== "object") return null;
+  const record = value as Record<string, unknown>;
+  if (typeof record.workflowId !== "string") return null;
+  if (typeof record.microWorkflowId !== "string" || !microWorkflowIds.includes(record.microWorkflowId as MicroWorkflowId)) return null;
+  if (typeof record.capabilityId !== "string") return null;
+  if (!record.currentInput || typeof record.currentInput !== "object") return null;
+  return {
+    workflowId: record.workflowId,
+    microWorkflowId: record.microWorkflowId as MicroWorkflowId,
+    capabilityId: record.capabilityId as CapabilityId,
+    currentInput: record.currentInput as ActiveWorkflowTurn["currentInput"],
+    workflowRunId: typeof record.workflowRunId === "string" ? record.workflowRunId : undefined
+  };
+}
+
+function interpretActiveWorkflowTurn(prompt: string, activeWorkflow: ActiveWorkflowTurn | null): WorkflowTurnInterpretation | null {
+  if (!activeWorkflow) return null;
+  const lower = prompt.toLowerCase();
+  const explicitSwitchSignals = [
+    "isa",
+    "sipp",
+    "adviser",
+    "advisor",
+    "portfolio",
+    "退休规划",
+    "账户构成",
+    "什么时候退休"
+  ];
+  const isSwitch = explicitSwitchSignals.some((signal) => lower.includes(signal)) &&
+    activeWorkflow.microWorkflowId === "retirement_pension_task_orchestration" &&
+    !/(?:两万|2万|二万|¥|公积金|提取|不取|取消)/iu.test(prompt);
+  if (isSwitch) {
+    return {
+      dialogueAct: "switch_task",
+      confidence: 0.72,
+      reasoning: "The user appears to be changing away from the active workflow, so global routing should decide the next capability.",
+      shouldInvokeCapability: false,
+      shouldUseGlobalRouter: true
+    };
+  }
+
+  if (isCancellationFollowUp(prompt)) {
+    return {
+      dialogueAct: "cancel_task",
+      confidence: 0.92,
+      reasoning: "The turn declines or cancels the active workflow rather than requesting a new capability.",
+      shouldInvokeCapability: false,
+      shouldUseGlobalRouter: false
+    };
+  }
+
+  if (activeWorkflow.microWorkflowId === "retirement_pension_task_orchestration") {
+    const amount = extractWithdrawalAmountFromPrompt(prompt);
+    if (Number.isFinite(amount)) {
+      return {
+        dialogueAct: "update_parameter",
+        confidence: 0.88,
+        reasoning: "The user updated the requested withdrawal amount inside the active pension workflow.",
+        shouldInvokeCapability: true,
+        shouldUseGlobalRouter: false,
+        extractedParameters: { requestedWithdrawalAmount: amount }
+      };
+    }
+  }
+
+  return {
+    dialogueAct: "ask_question",
+    confidence: 0.55,
+    reasoning: "The turn belongs to the active workflow but does not mutate a governed input.",
+    shouldInvokeCapability: false,
+    shouldUseGlobalRouter: false
+  };
+}
+
+function extractWithdrawalAmountFromPrompt(prompt: string) {
+  const match = prompt.match(
+    /[£¥]\s*(\d{1,3}(?:,\d{3})*|\d+)(?:\.\d+)?|(\d+(?:\.\d+)?)\s*(?:万|萬元|万元)|([一二两三四五六七八九十]+)\s*(?:万|萬元|万元)|\b(\d{4,7})\b/
+  );
+  const chineseWan = match?.[3];
+  if (chineseWan) {
+    const parsed = parseSmallChineseNumber(chineseWan);
+    return Number.isFinite(parsed) ? parsed * 10000 : undefined;
+  }
+  const raw = match?.[1] ?? match?.[2] ?? match?.[4];
+  if (!raw) return undefined;
+  const value = Number(raw.replaceAll(",", ""));
+  if (!Number.isFinite(value)) return undefined;
+  return match?.[2] ? value * 10000 : value;
+}
+
+function createWorkflowTurnResult(
+  activeWorkflow: ActiveWorkflowTurn,
+  interpretation: WorkflowTurnInterpretation
+): AgentReadableResult {
+  const isPension = activeWorkflow.microWorkflowId === "retirement_pension_task_orchestration";
+  const summary = interpretation.dialogueAct === "cancel_task"
+    ? "已停止本次公积金提取探索；没有提交申请，也没有调用资金办理接口。"
+    : "我已记录这条消息；当前工作流没有需要重新测算的输入变化。";
+  return {
+    capability: activeWorkflow.capabilityId,
+    workflow_id: activeWorkflow.microWorkflowId,
+    sub_intent: activeWorkflow.currentInput.pensionTaskIntent ?? "cash_access_exploration",
+    composition_mode: "active_workflow_turn_interpretation",
+    workflow_state: {
+      status: interpretation.dialogueAct === "cancel_task" ? "cancelled" : "paused",
+      dialogue_act: interpretation.dialogueAct,
+      reasoning: interpretation.reasoning
+    },
+    task_plan: isPension
+      ? [
+          {
+            id: "WorkflowTurnSummary",
+            title: interpretation.dialogueAct === "cancel_task" ? "已停止当前任务" : "当前任务已暂停",
+            source: "workflow_state",
+            microWorkflow: "active_workflow_turn_interpretation",
+            component: "WorkflowState"
+          }
+        ]
+      : [],
+    next_actions: interpretation.dialogueAct === "cancel_task"
+      ? [{ action: "restart_workflow", recommended: true }]
+      : [],
+    summary,
+    source_apis: [],
+    policy_checks: [
+      {
+        name: "active_workflow_dialogue_act",
+        status: "completed",
+        detail: interpretation.reasoning
+      }
+    ],
+    audit_trace_id: `WORKFLOW-TURN-${Date.now()}`
+  };
 }
 
 app.get("/", (_req, res) => {
@@ -159,7 +320,7 @@ app.post("/agent/request", async (req, res, next) => {
       res.status(400).json({ error: "prompt is required" });
       return;
     }
-    const routingPrompt = extractLatestUserRequest(prompt);
+    const routingPrompt = enrichRoutingPromptFromBody(extractLatestUserRequest(prompt), req.body ?? {});
 
     const scopeDecision = evaluateCustomerScope(routingPrompt, String(req.body?.customerId ?? ""));
     if (scopeDecision) {
@@ -214,7 +375,7 @@ app.post("/agui/runs", async (req, res, next) => {
       res.status(400).json({ error: "prompt is required" });
       return;
     }
-    const routingPrompt = extractLatestUserRequest(prompt);
+    const routingPrompt = enrichRoutingPromptFromBody(extractLatestUserRequest(prompt), req.body ?? {});
 
     res.writeHead(200, {
       "content-type": "text/event-stream; charset=utf-8",
@@ -279,6 +440,135 @@ app.post("/agui/runs", async (req, res, next) => {
       });
       res.end();
       return;
+    }
+
+    const activeWorkflow = parseActiveWorkflowTurn(req.body?.activeWorkflow);
+    const workflowTurn = interpretActiveWorkflowTurn(routingPrompt, activeWorkflow);
+    if (workflowTurn && !workflowTurn.shouldUseGlobalRouter) {
+      writeAguiEvent(res, {
+        type: "STATE_DELTA",
+        label: "Active workflow turn",
+        detail: workflowTurn.reasoning,
+        status: "completed",
+        runId,
+        state: { interpretation: workflowTurn, activeWorkflow }
+      });
+
+      if (!workflowTurn.shouldInvokeCapability && activeWorkflow) {
+        const capability = getCapability(activeWorkflow.capabilityId);
+        const result = createWorkflowTurnResult(activeWorkflow, workflowTurn);
+        const response = {
+          prompt: routingPrompt,
+          resolution: {
+            status: "resolved" as const,
+            intent: `active workflow ${workflowTurn.dialogueAct}`,
+            capabilityId: activeWorkflow.capabilityId,
+            confidence: workflowTurn.confidence,
+            reasoning: workflowTurn.reasoning,
+            resolver: "workflow_turn" as const
+          },
+          capability,
+          result
+        };
+        writeAguiEvent(res, {
+          type: "CUSTOM",
+          label: "Workflow state surface",
+          detail: result.summary,
+          status: workflowTurn.dialogueAct === "cancel_task" ? "blocked" : "completed",
+          runId,
+          state: {
+            presentationHint: "active_workflow_turn",
+            dialogueAct: workflowTurn.dialogueAct
+          }
+        });
+        writeAguiEvent(res, {
+          type: "RUN_FINISHED",
+          label: "Run finished",
+          detail: result.summary,
+          status: "completed",
+          runId,
+          response
+        });
+        res.end();
+        return;
+      }
+
+      if (workflowTurn.shouldInvokeCapability && activeWorkflow) {
+        const capability = getCapability(activeWorkflow.capabilityId);
+        if (!capability) throw new Error("Active workflow capability was not found");
+        const parsed = capabilityInvokeSchema.safeParse({
+          ...activeWorkflow.currentInput,
+          ...workflowTurn.extractedParameters
+        });
+        if (!parsed.success) {
+          writeAguiEvent(res, {
+            type: "RUN_ERROR",
+            label: "Invalid workflow turn input",
+            detail: "The active workflow rejected the interpreted input update.",
+            status: "blocked",
+            runId,
+            state: { issues: parsed.error.issues, interpretation: workflowTurn }
+          });
+          res.end();
+          return;
+        }
+        writeAguiEvent(res, {
+          type: "TOOL_CALL_START",
+          label: "Capability invocation",
+          detail: `Re-invoking ${capability.id} from active workflow state.`,
+          status: "running",
+          runId,
+          state: {
+            capabilityId: capability.id,
+            interpretation: workflowTurn,
+            inputPatch: workflowTurn.extractedParameters
+          }
+        });
+        const result = await composeCapability(capability, parsed.data);
+        const workflowRun = createWorkflowRun({
+          microWorkflowId: activeWorkflow.microWorkflowId,
+          capabilityId: capability.id,
+          input: parsed.data,
+          result
+        });
+        const response = {
+          prompt: routingPrompt,
+          resolution: {
+            status: "resolved" as const,
+            intent: "active workflow parameter update",
+            capabilityId: capability.id,
+            confidence: workflowTurn.confidence,
+            reasoning: workflowTurn.reasoning,
+            resolver: "workflow_turn" as const
+          },
+          capability,
+          result,
+          workflowRun
+        };
+        writeAguiEvent(res, {
+          type: "TOOL_CALL_END",
+          label: "Capability result",
+          detail: `${result.source_apis.length} governed source APIs composed from active workflow state.`,
+          status: "completed",
+          runId,
+          state: {
+            sourceApis: result.source_apis,
+            policyChecks: result.policy_checks,
+            auditTraceId: result.audit_trace_id,
+            workflowRunId: workflowRun.id
+          }
+        });
+        writeAguiEvent(res, {
+          type: "RUN_FINISHED",
+          label: "Run finished",
+          detail: `Workflow turn handled as ${workflowTurn.dialogueAct}.`,
+          status: "completed",
+          runId,
+          response
+        });
+        res.end();
+        return;
+      }
     }
 
     writeAguiEvent(res, {

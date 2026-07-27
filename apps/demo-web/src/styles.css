@@ -4088,8 +4088,10 @@ pre {
 
 .pension-flow-panel {
   display: grid;
+  align-content: start;
   gap: 13px;
   margin-top: 14px;
+  min-height: 238px;
   border: 1px solid rgba(94, 161, 255, 0.26);
   border-radius: 10px;
   padding: 15px;
@@ -4963,6 +4965,10 @@ pre {
 
   .agentic-ui-composition-row em {
     text-align: left;
+  }
+
+  .pension-flow-panel {
+    min-height: 0;
   }
 
   .pension-outcome-amount {

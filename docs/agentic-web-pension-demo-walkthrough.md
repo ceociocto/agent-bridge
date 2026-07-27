@@ -1,18 +1,22 @@
 # Agentic Web 公积金/养老金 Demo 讲解稿
 
-这份文档用于边演示边解释本次 `Agentic Web` demo 的技术架构。核心场景是：
+这份文档用于边演示边解释当前 `Agentic Web` demo 的整体方案。它不只是一个“聊天框生成页面”的演示，而是展示：
 
-> 我最近手头紧，要提取一些公积金
+> 用户表达目标后，系统如何通过意图识别、能力注册、能力组合、工作流运行和动态 UI 组装，把企业服务组织成当前任务需要的工作区。
 
-演示目标不是证明“用户少点几次按钮”，而是证明：
+核心演示从这个问题开始：
 
-> 原来用户必须自己弄清楚该做什么，现在系统能够围绕用户目标组织整个服务。
+```text
+我最近手头紧，要提取一些公积金
+```
 
-因此，这个 demo 应该体现三件事：
+第二条推荐演示线是：
 
-1. 用户可以用模糊自然语言开始，而不是先找业务入口。
-2. 系统能把模糊需求逐步收敛到具体业务能力。
-3. 工作区不是固定页面，而是由意图、能力、规则和 task plan 动态组装出来。
+```text
+我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。
+```
+
+这两条线共用同一个后端能力 `retirement_pension_task_orchestration`，但会生成不同的 task plan 和不同的工作区组件。
 
 ## 1. 演示入口
 
@@ -22,79 +26,118 @@
 http://localhost:4102/agentic
 ```
 
-首页默认问题已经改成：
+如果 `4102` 被占用，Vite 会自动切到下一个端口，例如：
+
+```bash
+http://localhost:4104/agentic
+```
+
+演示重点不是“少点几个按钮”，而是：
+
+> 传统 Web 要求用户先理解服务目录；Agentic Web 允许用户先表达目标，再由系统在受治理能力目录内组织服务路径。
+
+演示时可以先点默认问题：
 
 ```text
 我最近手头紧，要提取一些公积金
 ```
 
-演示时点击发送，观察左侧工作区从空状态变成“公积金提取方案”。
+然后继续输入：
 
-这里要强调：
+```text
+我要提取2万
+```
 
-> 用户没有选择“公积金服务 > 提取 > 住房提取 > 资格检查”这些菜单。用户只是表达目标，系统负责寻找服务路径。
+再输入：
 
-## 2. 整体架构
+```text
+不取了
+```
 
-本次实现可以拆成五层，但要注意：`Intent` 的识别不是几条平行路线同时决定结果，而是一条纵向收敛流水线。`Capability Registry` 更像旁路知识源，为检索、评分和校验提供能力描述、示例、schema 与安全边界。
+这三个 turn 分别展示：
+
+- 初始意图如何路由到能力。
+- 当前 workflow 内如何更新参数并重新测算。
+- 当前 workflow 内如何解释取消动作，而不是误调用能力或沿用旧结果。
+
+## 2. 总体架构
+
+当前实现可以拆成七层：
+
+1. `Intent Resolution Pipeline`
+2. `Capability Registry`
+3. `Capability Composer`
+4. `Dynamic Task Plan`
+5. `Workflow Run`
+6. `Active Workflow Turn Interpreter`
+7. `Workspace Renderer`
 
 ```mermaid
 flowchart TD
-  A["用户自然语言"] --> B["Intent Resolution Pipeline"]
+  A["User natural language"] --> B{"Has active workflow?"}
 
-  B --> B1["Policy Guard"]
-  B1 --> B2["Prompt Preprocess"]
-  B2 --> B3["IntentFrame Extraction"]
-  B3 --> B4["Frame Guard"]
-  B4 --> B5["BM25 and Semantic Retrieval"]
-  B5 --> B6["Hybrid Scoring"]
-  B6 --> B7["Zod Decision Validation"]
-  B7 --> B8["Routing Decision"]
+  B -- "No" --> C["Global Intent Resolution Pipeline"]
+  B -- "Yes" --> T["Active Workflow Turn Interpreter"]
 
-  C["Capability Registry"] -. "route docs" .-> B5
-  C -. "schemas" .-> B7
+  T --> T1{"Dialogue act"}
+  T1 -- "update_parameter" --> E["Capability Composer"]
+  T1 -- "cancel_task" --> WS["Workflow State Result"]
+  T1 -- "ask_question" --> WS
+  T1 -- "switch_task" --> C
 
-  B8 --> D["Selected Capability"]
-  D --> E["Capability Composer"]
-  E --> F["Dynamic Task Plan"]
+  C --> C1["Policy Guard"]
+  C1 --> C2["Prompt Preprocess"]
+  C2 --> C3["IntentFrame Extraction"]
+  C3 --> C4["Frame Guard"]
+  C4 --> C5["BM25 and Semantic Retrieval"]
+  C5 --> C6["Hybrid Scoring"]
+  C6 --> C7["Zod Decision Validation"]
+  C7 --> D["Selected Capability"]
+
+  R["Capability Registry"] -. "route docs / schema / policy" .-> C5
+  R -. "valid ids and contracts" .-> C7
+  R --> D
+
+  D --> E
+  API["Business APIs"] --> E
+  E --> F["Business Result + task_plan"]
   F --> G["Workflow Run"]
   G --> H["Workspace Renderer"]
+  WS --> H
 
-  I["Business APIs"] --> E
-  I --> G
-  I1["Profile API"] --> I
-  I2["Portfolio API"] --> I
-  I3["Eligibility API"] --> I
-  I4["Impact API"] --> I
-
-  D --> J["retirement_pension_task_orchestration"]
+  H --> UI["Generated Business Workspace"]
 ```
 
-关键点：
+关键解释：
 
-- `Intent Resolution Pipeline` 是主流程，用户输入会从上到下经过策略、预处理、意图框架、检索、评分和校验。
-- `Capability Registry` 不直接“执行一步”，而是为 pipeline 提供可匹配、可校验、可治理的能力目录。
-- `BM25 Retriever` 和 `Semantic Router` 只负责召回候选 capability，不单独决定最终业务。
-- `Zod Decision Validation` 校验最终 routing decision，保证 `resolved` 一定绑定合法 capability。
-- `Retirement Pension Capability` 是统一能力，不是一个固定页面。
-- `Capability Composer` 结合用户子意图、规则和业务 API 结果，生成当前任务需要的业务结果和 `Task Plan`。
-- `Business APIs` 是 capability / workflow 使用的上游数据源，不是和 `Task Plan` 并列的页面步骤。
-- `Task Plan` 根据子意图和业务结果动态选择阶段。
-- `Workflow Run` 把 task plan 变成可推进、可审计的运行实例，后续阶段也可以继续调用业务 API。
-- `Workspace Renderer` 根据结果渲染面向用户的工作区。
+- 没有 active workflow 时，用户输入先进入全局意图路由。
+- 已经有 active workflow 时，新消息先进入 `Active Workflow Turn Interpreter`。
+- 只有当用户明显切换任务时，才回到全局 capability router。
+- `update_parameter` 会在当前 workflow 内更新输入并重新调用能力。
+- `cancel_task` 会结束/暂停当前 workflow，并渲染 workflow state，而不是启动新能力。
+- 页面不是模型自由生成的 HTML，而是由 `task_plan.component` 映射到受控组件 registry。
 
-## 3. 意图如何被筛选和收敛
+## 3. 全局意图识别：从自然语言到能力
 
 相关实现：
 
 - `apps/gateway/src/intent.ts`
-- `apps/gateway/src/routeBm25Store.ts`
 - `apps/gateway/src/routeCatalog.ts`
+- `apps/gateway/src/routeBm25Store.ts`
+- `apps/gateway/src/semanticIntentRouter.ts`
 - `evals/cn-pension-router-cases.jsonl`
 
-### 3.1 第一层：IntentFrame
+### 3.1 IntentFrame
 
-系统先把用户输入抽取成一个轻量意图框架：
+系统先抽取轻量结构化意图框架。
+
+用户输入：
+
+```text
+我最近手头紧，要提取一些公积金
+```
+
+会被抽取为：
 
 ```ts
 {
@@ -105,128 +148,124 @@ flowchart TD
 }
 ```
 
-这一步解决的是“不要一看到关键词就进业务”的问题。
-
-例如：
+如果用户输入：
 
 ```text
-帮我
+公积金
 ```
 
-会被识别为：
-
-```ts
-{
-  domain: "unknown",
-  goal: "unknown",
-  actionability: "none"
-}
-```
-
-结果是 `unsupported`，不会进入公积金提取。
-
-再比如：
+系统会认为领域明确，但目标不明确，返回 clarification：
 
 ```text
-不要提取一些公积金
+你是想提取公积金、查看账户构成，还是咨询退休/领取方案？
 ```
 
-会被识别为负向请求：
+如果用户输入：
+
+```text
+不要提取公积金
+```
+
+会被抽取为：
 
 ```ts
 {
   domain: "housing_fund",
   goal: "cancel_or_decline",
-  polarity: "negative"
+  polarity: "negative",
+  actionability: "none"
 }
 ```
 
-结果同样不会启动业务。
+这类请求不会启动业务 workflow。
 
-### 3.2 第二层：BM25 + Semantic Hybrid
+### 3.2 BM25 + Semantic Hybrid
 
-只靠关键词不够，尤其中文短句会很碎，比如：
+`Capability Registry` 会被转换为 route documents。每个 document 包含：
+
+- capability id
+- capability name
+- description
+- business outcome
+- input schema
+- required APIs
+- routing domains
+- keywords
+- positive / negative examples
+
+BM25 负责中文短句和词面召回，比如：
 
 ```text
 帮我取公积金
 ```
 
-所以新增了本地 BM25 召回：
-
-```ts
-const bm25RouteStore = new LocalBm25RouteStore(buildRouteDocuments());
-```
-
-`routeCatalog.ts` 会把 capability 的名称、描述、业务结果、API、示例问题、routing metadata 合成 route document。BM25 会对这些文档做快速检索。
-
-然后 `intent.ts` 把三类信号合并：
+Semantic router 负责语义相似度。最终分数不是单一路由器决定，而是：
 
 ```text
-BM25 分数
-+ Semantic router 分数
-+ IntentFrame 对 capability 的领域加权
+BM25 score
++ semantic score
++ IntentFrame domain boost
 ```
 
-这样做的价值是：
+这样可以同时避免两类问题：
 
-- BM25 适合短文本、中文词面命中。
-- Semantic router 适合语义相近但不完全同词的表达。
-- IntentFrame 防止语义召回把无效请求误推到高风险业务。
+- 只靠关键词导致否定请求误触发。
+- 只靠语义相似导致模糊请求误进入高风险能力。
 
-### 3.3 第三层：Zod 决策校验
+### 3.3 Zod Decision Validation
 
-最终 routing decision 会经过 Zod 校验：
+最终 routing decision 会经过 schema 校验：
 
 ```ts
-const RoutingDecisionSchema = z.object({
-  status: z.enum(["resolved", "needs_clarification", "unsupported", "denied"]),
-  capabilityId: z.enum(capabilityIds).optional()
-}).superRefine(...)
+status: "resolved" | "needs_clarification" | "unsupported" | "denied"
+capabilityId?: CapabilityId
 ```
 
-这保证：
+规则是：
 
-> 只要状态是 `resolved`，就必须有合法 capabilityId。
+> 只要 `status === "resolved"`，就必须绑定合法 capability id。
 
-也就是说，模型或检索器不能返回半截脏结果。
+这保证检索器、LLM 或混合路由不能产生半截、不合法的业务决策。
 
-## 4. Capability 如何配置
+## 4. 能力注册：企业暴露的是能力，不是页面
 
 相关实现：
 
 - `apps/gateway/src/catalog.ts`
+- `apps/gateway/src/capabilityPackages.ts`
 
-本场景对应统一能力：
+本场景使用统一能力：
 
 ```ts
 retirement_pension_task_orchestration
 ```
 
-它不是“公积金提取页面”，而是一个面向养老金/公积金任务的能力边界：
+它不是“公积金提取页面”，而是一个可治理的业务能力边界：
 
 ```text
 养老金/公积金任务编排能力
 ```
 
-它声明了：
+它声明：
 
-- 支持哪些输入：`pensionTaskIntent`、`requestedWithdrawalAmount`、`targetRetirementAge`
-- 会调用哪些 API：画像、账户、资格、影响测算、退休领取方案
-- 会输出什么：`task_plan`、账户信息、资格结果、影响结果、下一步动作
+- 支持输入：`pensionTaskIntent`、`requestedWithdrawalAmount`、`targetRetirementAge`
+- 需要 API：会员画像、养老金账户、公积金资格、到账影响、退休领取方案
+- 输出结果：`summary`、`task_plan`、`pension_portfolio`、`withdrawal_impact`、`retirement_options`、`next_actions`
+- 数据分级：`restricted`
 - 风险级别：`high`
-- 是否需要客户确认：`true`
+- 正式执行是否需要客户确认：`true`
 
-这体现了 Agentic Web 的核心：
+演示时要强调：
 
-> 企业暴露的不是页面，而是可发现、可组合、可治理的业务能力。
+> Agentic Web 的治理边界在 capability contract 里，而不是散落在页面按钮里。
 
-## 5. Task Plan 如何动态生成
+## 5. 能力组合：同一个能力根据子意图生成不同 task plan
 
 相关实现：
 
 - `apps/gateway/src/composers.ts`
 
-统一 capability 内部有三个子意图：
+统一能力内部有三个子意图：
 
 ```ts
 type PensionTaskIntent =
@@ -235,19 +274,21 @@ type PensionTaskIntent =
   | "pot_composition";
 ```
 
-用户输入：
+### 5.1 公积金提取探索
+
+输入：
 
 ```text
 我最近手头紧，要提取一些公积金
 ```
 
-会收敛到：
+收敛为：
 
-```text
-cash_access_exploration
+```ts
+pensionTaskIntent = "cash_access_exploration"
 ```
 
-于是 task plan 组装为：
+生成 task plan：
 
 ```text
 解析用户目标
@@ -258,13 +299,30 @@ cash_access_exploration
 → 等待你的决定
 ```
 
-如果用户输入：
+输出包含：
+
+- `customer`
+- `pension_portfolio`
+- `withdrawal_eligibility`
+- `withdrawal_impact`
+- `limit_check`
+- `next_actions`
+
+### 5.2 退休规划与领取策略
+
+输入：
 
 ```text
-我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金
+我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。
 ```
 
-同一个 capability 会生成另一组 task plan：
+收敛为：
+
+```ts
+pensionTaskIntent = "retirement_claim_planning"
+```
+
+生成 task plan：
 
 ```text
 解析用户目标
@@ -275,13 +333,28 @@ cash_access_exploration
 → 下一步决策门
 ```
 
-如果用户输入：
+输出包含：
+
+- `retirement_options.target_retirement_age`
+- 不同退休年龄下的 projected balance
+- estimated monthly income
+- fit score
+- claim strategies
+- next actions
+
+这条线用于说明：
+
+> 同一个 capability 不是只有“提取”一种服务路径，它能根据用户目标选择规划、比较和领取策略组件。
+
+### 5.3 账户构成分析
+
+输入：
 
 ```text
 我的养老金中各项比例是多少
 ```
 
-则只需要：
+只需要：
 
 ```text
 解析用户目标
@@ -290,150 +363,224 @@ cash_access_exploration
 → 查看账户构成
 ```
 
-这里要强调：
+这说明 task plan 是能力组合结果，不是固定流程。
 
-> 不是后台提前写死三张页面，而是同一个 capability 根据子意图返回不同 task_plan。
-
-## 6. Workflow Run 如何承接 Task Plan
+## 6. Workflow Run：把 task plan 变成可运行实例
 
 相关实现：
 
 - `apps/gateway/src/workflowRuns.ts`
 
-`composeRetirementPensionTaskOrchestration()` 返回 `task_plan` 后，workflow runtime 会把它转换成可运行步骤：
+能力返回 `task_plan` 后，workflow runtime 会生成 `WorkflowRun`：
 
 ```ts
-if (microWorkflowId === "retirement_pension_task_orchestration") {
-  const taskPlan = Array.isArray(result.task_plan) ? result.task_plan : [];
-  steps.splice(0, steps.length, ...taskPlan.map(...));
+steps = taskPlan.map(stage => ({
+  id: stage.id,
+  label: stage.title,
+  detail: pensionStageDetail(stage.id),
+  allowedActions: ["advance"],
+  uiHint: "scenario_comparison"
+}));
+```
+
+`WorkflowRun` 提供：
+
+- `currentStepIndex`
+- step status
+- allowed actions
+- observations
+- plan revisions
+- events
+- audit trace id
+
+这不是“页面上画一个步骤条”，而是一个可以继续推进、重试、观察和修订的运行实例。
+
+## 7. Active Workflow Turn：多轮对话不是每句都重新路由
+
+相关实现：
+
+- `packages/shared/src/index.ts`
+- `apps/gateway/src/server.ts`
+- `apps/demo-web/src/main.tsx`
+
+这是当前 demo 最重要的架构更新。
+
+旧问题是：
+
+1. 第一轮进入公积金提取 workflow。
+2. 第二轮用户说“我要提取2万”。
+3. 如果全局路由只看这句话，会缺少“公积金”领域上下文。
+4. 如果机械补上下文，第三轮“不取了”又可能被误包装成正向提取。
+
+因此现在不再把每一句 follow-up 都交给全局 router，而是先解释它相对于当前 workflow 的动作。
+
+结构化输出：
+
+```ts
+type WorkflowDialogueAct =
+  | "update_parameter"
+  | "cancel_task"
+  | "choose_option"
+  | "continue_application"
+  | "ask_question"
+  | "switch_task"
+  | "new_task";
+```
+
+前端会把 active workflow context 传给 gateway：
+
+```ts
+{
+  workflowId: "pension-cash-access",
+  microWorkflowId: "retirement_pension_task_orchestration",
+  capabilityId: "retirement_pension_task_orchestration",
+  currentInput: {
+    customerId: "CN001",
+    pensionTaskIntent: "cash_access_exploration",
+    requestedWithdrawalAmount: 20000
+  }
 }
 ```
 
-这说明：
+### 7.1 参数更新
 
-- capability 负责生成当前任务需要哪些阶段；
-- workflow runtime 负责把阶段变成可推进的运行实例；
-- UI 通过 `workflowRun.currentStepIndex` 显示当前进度；
-- 所有步骤都有运行状态和审计信息。
+用户继续输入：
 
-这不是“LLM 随机生成流程”，而是：
+```text
+我要提取2万
+```
 
-> 受控阶段库 + capability 输出 + workflow runtime 生成实例。
+解释结果：
 
-## 7. 工作区如何体现“减少无意义操作，保留有意义决定”
+```ts
+{
+  dialogueAct: "update_parameter",
+  extractedParameters: {
+    requestedWithdrawalAmount: 20000
+  },
+  shouldInvokeCapability: true,
+  shouldUseGlobalRouter: false
+}
+```
+
+结果：
+
+- 不重新找 capability。
+- 不重新问用户想做哪个业务。
+- 直接用当前 workflow 输入 + 新金额重新调用 capability。
+- 工作区更新为 `¥20,000` 的到账影响。
+
+### 7.2 取消当前任务
+
+用户继续输入：
+
+```text
+不取了
+```
+
+解释结果：
+
+```ts
+{
+  dialogueAct: "cancel_task",
+  shouldInvokeCapability: false,
+  shouldUseGlobalRouter: false
+}
+```
+
+结果：
+
+- 不调用公积金资格 API。
+- 不调用到账测算 API。
+- 不沿用上一轮 `¥20,000` 结果。
+- 返回 `WorkflowState` 组件：
+
+```text
+已停止本次公积金提取探索；没有提交申请，也没有调用资金办理接口。
+```
+
+这才是 Agentic 多轮任务的关键：
+
+> 用户新消息先被解释为当前 workflow 的状态转移，而不是每轮都重新做全局意图路由。
+
+## 8. 页面动态生成：task_plan.component 驱动组件 registry
 
 相关实现：
 
 - `apps/demo-web/src/main.tsx`
 
-公积金提取工作区会直接展示：
-
-- 目标金额
-- 预计到账
-- 账户余额
-- 身份状态
-- 可行路径
-- 提取用途
-- 是否超过路径上限
-- 下一步是否进入受控申请
-
-用户不需要先做这些事情：
+当前公积金工作区不是 `workflow.id === pension-cash-access` 后渲染一整张写死页面，而是：
 
 ```text
-找入口
-查规则
-重复填年龄、账户、身份
-自己计算到账影响
-自己判断哪条路径能走
+result.task_plan
+→ task_plan.component
+→ pensionComponentRegistry
+→ rendered workspace
 ```
 
-但系统仍然保留关键决定：
+组件 registry 包括：
+
+```ts
+{
+  IntentSummary,
+  KnownFacts,
+  AccountStrip,
+  EligibilityRoutes,
+  ImpactPreview,
+  DecisionGate,
+  WorkflowState
+}
+```
+
+公积金提取 task plan 会渲染：
+
+```text
+IntentSummary
+→ KnownFacts
+→ AccountStrip
+→ EligibilityRoutes
+→ ImpactPreview
+→ DecisionGate
+```
+
+取消当前任务时，workflow-local result 会渲染：
+
+```text
+WorkflowState
+```
+
+演示时可以说：
+
+> 页面不是模型自由生成，也不是固定路由页面，而是 capability 输出的 typed task plan 驱动受控组件组合。
+
+## 9. 用户体验原则：Agent 负责准备，用户负责关键判断
+
+公积金工作区自动完成：
+
+- 识别目标
+- 读取会员画像
+- 读取账户与余额
+- 检查可行路径
+- 估算到账区间
+- 估算长期权益影响
+- 检查路径上限
+
+用户仍然要做：
 
 - 选择真实用途
 - 比较低影响方案
-- 是否进入受控申请
-- 正式申请前完成条款确认、身份验证、最终授权
+- 决定是否进入受控申请
+- 正式申请前完成条款确认、身份验证和最终授权
 
-这正是 demo 要表达的价值：
+这不是“全自动替用户办业务”，而是：
 
-> Agent 承担理解系统和准备业务的负担，用户只承担目标表达、关键判断和最终授权。
+> Agent 承担理解系统和准备业务的负担；用户保留关键判断和最终授权。
 
-## 8. 金额变化如何动态影响结果
+## 10. 推荐演示脚本
 
-演示：
+### 10.1 公积金提取探索
 
-```text
-先试试提取30000
-```
-
-工作区会更新为：
-
-```text
-从公积金账户提取 ¥30,000
-预计到账 ¥27,600 - ¥28,500
-```
-
-再演示：
-
-```text
-我要提取100万
-```
-
-能力层会计算当前所有可行路径的上限，并返回：
-
-```text
-limit_check.status = "blocked"
-```
-
-工作区应该展示：
-
-```text
-目标金额超过所有可行路径上限
-无法继续提交申请
-```
-
-这说明流程不是固定文案，而是由业务结果驱动。
-
-## 9. 为什么需要 Eval
-
-相关实现：
-
-- `evals/cn-pension-router-cases.jsonl`
-- `evals/fidelity-uk-router-cases.jsonl`
-
-本次改动后验证结果：
-
-```text
-中文路由 eval: 16/16
-英文路由 eval: 16/16
-```
-
-中文 eval 覆盖了几类关键边界：
-
-```text
-我最近手头紧，要提取一些公积金       → resolved
-帮我取公积金                         → resolved
-我准备退休...怎样领取养老金           → resolved
-我的养老金中各项比例是多少             → resolved
-不要提取一些公积金                    → unsupported
-帮我                                 → unsupported
-公积金                               → needs_clarification
-历史里有天气，但最新请求是帮我取公积金 → resolved
-```
-
-Eval 的意义不是追求“命中关键词”，而是防止三类退化：
-
-1. 模糊请求被误导入高风险业务。
-2. 否定请求仍然启动业务。
-3. 持续对话中的历史上下文污染最新意图。
-
-## 10. 演示时推荐讲法
-
-可以按下面顺序讲：
-
-### 第一步：自然语言进入
-
-用户输入：
+输入：
 
 ```text
 我最近手头紧，要提取一些公积金
@@ -441,45 +588,40 @@ Eval 的意义不是追求“命中关键词”，而是防止三类退化：
 
 讲解：
 
-> 传统 Web 要求用户先找入口。这里用户只表达目标，gateway 先判断这是否是一个可治理的业务意图。
+> 用户没有选择菜单。系统先做全局意图识别，命中养老金/公积金任务编排能力，然后 capability 生成公积金提取探索 task plan。
 
-### 第二步：意图收敛
+观察页面：
 
-讲解：
+- 意图已收敛
+- 自动补全资料
+- 账户构成
+- 可行路径
+- 到账影响
+- DecisionGate
 
-> 系统先抽取 IntentFrame，判断是公积金领域、资金提取目标、正向请求、可执行意图。然后用 BM25 和语义路由匹配到统一的养老金/公积金任务编排能力。
-
-### 第三步：Capability 接管
-
-讲解：
-
-> 进入 capability 后，不是马上提交申请，而是先加载已知画像和账户，生成当前任务需要的 task plan。
-
-### 第四步：动态工作区出现
-
-讲解：
-
-> 工作区展示的是业务准备结果，不是固定页面。系统已经完成读取账户、资格路径、影响测算，但还没有提交申请。
-
-### 第五步：用户做关键判断
-
-讲解：
-
-> 这里保留的是有意义的选择：用途、是否比较低影响方案、是否进入受控申请。只有进入受控申请后，才会出现条款、身份验证和最终授权。
-
-### 第六步：改金额验证动态性
-
-用户继续输入：
+继续输入：
 
 ```text
-先试试提取30000
+我要提取2万
 ```
 
 讲解：
 
-> 同一个 task session 没有重走入口，只是更新金额事实并重新测算影响。
+> 这不是新任务。Active Workflow Turn Interpreter 把它解释成 update_parameter，只更新 requestedWithdrawalAmount，然后重新测算。
 
-再输入：
+继续输入：
+
+```text
+不取了
+```
+
+讲解：
+
+> 这也不是新任务。系统把它解释成 cancel_task，直接渲染 WorkflowState，明确说明没有提交申请，也没有调用资金办理接口。
+
+### 10.2 超限场景
+
+输入：
 
 ```text
 我要提取100万
@@ -487,27 +629,106 @@ Eval 的意义不是追求“命中关键词”，而是防止三类退化：
 
 讲解：
 
-> 业务能力返回超限状态，工作区阻止继续申请。这不是前端写死的按钮禁用，而是 capability 的规则结果驱动。
+> 当前所有可行路径的上限来自业务 API。能力返回 `limit_check.status = "blocked"`，页面因此阻止进入申请。
 
-## 11. 当前实现边界
+这说明：
 
-这个 demo 已经体现了 Agentic Web 的架构形态，但仍是演示级实现：
+> 阻断不是前端写死按钮，而是业务能力结果驱动。
 
-- `IntentFrame` 目前是代码规则抽取，不是独立模型服务。
-- BM25 是本地内存检索，不是外部向量/搜索服务。
-- 公积金 workflow 使用 mock API，不是真实政务或金融系统。
-- 动态 UI 是受控组件组合，不允许模型自由生成交易页面。
+### 10.3 退休规划
 
-更生产化的下一步是：
+切换或输入：
 
-1. 把 `IntentFrame` 抽取升级为小模型或结构化 LLM，并保留 Zod 校验。
-2. 把 route documents 接到真实 capability registry。
-3. 把 BM25 + 向量检索做成统一 retriever。
-4. 把 task plan 的 stage registry 从代码迁移到后端配置。
-5. 为每个高风险业务维护 eval 集，作为发布门禁。
+```text
+我准备退休，想知道什么时候退休最合适，以及应该怎样领取养老金。
+```
 
-## 12. 一句话总结
+讲解：
 
-这个 demo 的本质不是“聊天框生成页面”，而是：
+> 同一个 `retirement_pension_task_orchestration` capability 现在选择的是 `retirement_claim_planning` 子意图，而不是公积金提取。
 
-> 用户表达目标后，系统通过意图框架、能力检索、受控 task plan 和 workflow runtime，把企业服务动态组织成当前用户真正需要的工作区。
+观察页面：
+
+- 退休时间线
+- 不同退休年龄的预计月收入
+- fit score
+- 领取策略比较
+- 受控领取申请入口
+
+可以继续输入：
+
+```text
+63岁退休呢？
+```
+
+讲解：
+
+> 这个方向可以进一步扩展为 workflow-local `update_parameter`，更新 `targetRetirementAge` 并重新调用退休领取方案 API。当前演示已经具备目标字段和 API，后续可以把这一轮也接入 active workflow turn interpreter。
+
+### 10.4 长任务场景
+
+另一个可展示长任务的现有示例是：
+
+```text
+Show the retirement impact of increasing contributions through salary sacrifice.
+```
+
+对应 workflow：
+
+```text
+retirement_goal_gap_projection
+```
+
+它展示：
+
+- long task
+- durable workflow
+- retry checkpoint
+- 根据 projection 结果插入或移除 comparison step
+
+讲解：
+
+> Agentic Web 不只是一次性生成页面。对于长任务，workflow runtime 可以保存 checkpoint、观察结果、修订 plan，并恢复执行。
+
+## 11. 当前演示覆盖的 Agentic Web 特征
+
+| 特征 | 当前覆盖方式 |
+| --- | --- |
+| 自然语言入口 | 用户用中文目标启动 |
+| 能力注册 | `catalog.ts` 中声明 capability contract |
+| 能力检索 | route docs + BM25 + semantic router |
+| 结构化意图 | IntentFrame + Zod validation |
+| 能力组合 | composer 根据子意图调用不同 API |
+| 动态 task plan | capability 输出 `task_plan` |
+| 工作流运行 | `WorkflowRun` 保存 steps / events / revisions |
+| 多轮任务解释 | active workflow turn interpreter |
+| 动态页面生成 | `task_plan.component` -> component registry |
+| 人在回路 | DecisionGate / 条款确认 / 身份验证 / 最终授权 |
+| 业务规则阻断 | `limit_check.status = blocked` |
+| 长任务 | retirement goal gap projection |
+| 审计 | audit trace + policy checks |
+
+## 12. 当前边界和下一步
+
+当前 demo 仍是演示级实现：
+
+- Business APIs 是 mock API。
+- `IntentFrame` 和 workflow turn interpretation 仍主要是本地确定性实现。
+- 公积金工作区已改为 task-plan registry driven；退休规划工作区仍可以进一步拆成同样的 registry 组件。
+- `WorkflowState` 已能表达取消/暂停，但还可以扩展为可恢复、可重新开始、可归档。
+- 长任务场景已有 durable/retry 演示，但还没有和中文养老金规划完全合并。
+
+下一步建议：
+
+1. 把 `interpretActiveWorkflowTurn` 独立成模块，并引入 LLM/semantic classifier 作为模糊裁决层。
+2. 为 dialogue act 增加 eval：金额更新、取消、继续申请、切换任务、普通问题。
+3. 把退休规划也改成 `task_plan.component` registry driven。
+4. 让 `targetRetirementAge` 的 follow-up 进入 workflow-local `update_parameter`。
+5. 把 stage registry 从前端代码迁移到能力配置或后端 schema。
+6. 为所有高风险 workflow 输出统一审计事件：turn interpreted、plan revised、capability invoked、workflow cancelled。
+
+## 13. 一句话总结
+
+这个 demo 的核心不是“AI 画页面”，而是：
+
+> 在受治理的企业能力目录内，Agent 根据用户目标选择能力、组合业务步骤、解释多轮动作、维护 workflow 状态，并把当前任务动态渲染成用户真正需要的工作区。

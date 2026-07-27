@@ -155,7 +155,11 @@ function hasPensionAccessAction(prompt: string) {
 }
 
 function hasPensionAccessNegation(prompt: string) {
-  return /(?:不要|不想|不用|别|无需|暂不|先不|不要帮我|别帮我|取消)\s*(?:帮我)?\s*(?:提取|取钱|取出来|取一部分|拿出来|取)?\s*(?:一些|一下|部分)?\s*(?:公积金|住房公积金|养老金)?/iu.test(prompt);
+  return (
+    /(?:不取了|不提取了|不想取了|不想提取了|先不取|暂不取|算了|不用了|取消)/iu.test(prompt) ||
+    /(?:不要|不想|不用|别|无需|暂不|先不|不要帮我|别帮我|取消)\s*(?:帮我)?\s*(?:提取|取钱|取出来|取一部分|拿出来|取)?\s*(?:一些|一下|部分)?\s*(?:公积金|住房公积金|养老金)?/iu.test(prompt) ||
+    /(?:公积金|住房公积金|养老金).{0,8}(?:不取|不提取|取消|不用|暂不|先不)/iu.test(prompt)
+  );
 }
 
 function hasNegationCancellation(prompt: string) {

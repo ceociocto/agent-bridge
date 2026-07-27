@@ -168,7 +168,7 @@ export type IntentResolution = {
   capabilityId?: CapabilityId;
   confidence: number;
   reasoning: string;
-  resolver?: "llm" | "rules" | "semantic" | "hybrid" | "intent_frame" | "fallback";
+  resolver?: "llm" | "rules" | "semantic" | "hybrid" | "intent_frame" | "workflow_turn" | "fallback";
   questions?: string[];
   availableCapabilities?: CapabilityId[];
   policyDecision?: AuditStep;
@@ -218,6 +218,32 @@ export type AgentReadableResult = {
 export type WorkflowStepStatus = "waiting" | "requires_action" | "running" | "completed" | "failed";
 export type WorkflowRunStatus = "active" | "waiting_for_human" | "completed" | "failed";
 export type WorkflowActionType = "advance" | "retry" | "approve";
+export type WorkflowDialogueAct =
+  | "update_parameter"
+  | "cancel_task"
+  | "choose_option"
+  | "continue_application"
+  | "ask_question"
+  | "switch_task"
+  | "new_task";
+
+export type ActiveWorkflowTurn = {
+  workflowId: string;
+  microWorkflowId: MicroWorkflowId;
+  capabilityId: CapabilityId;
+  currentInput: CapabilityInvokeInput;
+  workflowRunId?: string;
+};
+
+export type WorkflowTurnInterpretation = {
+  dialogueAct: WorkflowDialogueAct;
+  confidence: number;
+  reasoning: string;
+  shouldInvokeCapability: boolean;
+  shouldUseGlobalRouter: boolean;
+  extractedParameters?: Partial<CapabilityInvokeInput>;
+};
+
 export type WorkflowUiHint =
   | "allowance_donut"
   | "amount_slider"
