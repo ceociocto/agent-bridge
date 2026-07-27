@@ -1375,6 +1375,12 @@ type PensionWorkspaceContext = {
   amountCappedByRoute: boolean;
   blockedByLimit: boolean;
   routeMaxAmount?: number;
+  retirementOptions: Array<Record<string, unknown>>;
+  claimStrategies: Array<Record<string, unknown>>;
+  selectedRetirementAge: string;
+  setSelectedRetirementAge: React.Dispatch<React.SetStateAction<string>>;
+  selectedClaimStrategy: string;
+  setSelectedClaimStrategy: React.Dispatch<React.SetStateAction<string>>;
 };
 
 const pensionStageLibrary: Record<PensionIntentStageId, PensionIntentStage> = {
@@ -1670,12 +1676,28 @@ function PensionTaskPlanWorkspace({
   const eligibility = result.withdrawal_eligibility as Record<string, unknown> | undefined;
   const impact = result.withdrawal_impact as Record<string, unknown> | undefined;
   const limitCheck = result.limit_check as Record<string, unknown> | undefined;
+  const retirementResult = result.retirement_options as Record<string, unknown> | undefined;
+  const retirementOptions = Array.isArray(retirementResult?.options)
+    ? retirementResult.options as Array<Record<string, unknown>>
+    : [
+        { retirement_age: 60, estimated_monthly_income: "¥2,900", fit_score: "74%" },
+        { retirement_age: 63, estimated_monthly_income: "¥3,300", fit_score: "86%" },
+        { retirement_age: 65, estimated_monthly_income: "¥3,600", fit_score: "96%" }
+      ];
+  const claimStrategies = Array.isArray(retirementResult?.claim_strategies)
+    ? retirementResult.claim_strategies as Array<Record<string, unknown>>
+    : [
+        { label: "按月领取", summary: "适合希望收入稳定、减少一次性支出风险的用户。" },
+        { label: "部分一次性 + 月领", summary: "适合需要先偿还大额支出，同时保留长期收入的用户。" }
+      ];
   const routes = Array.isArray(eligibility?.routes) ? eligibility.routes as Array<Record<string, unknown>> : [];
   const routeOptions = routes.length ? routes : [
     { label: "住房公积金提取", maximum_amount: "¥120,000", required_evidence: ["主要住房声明", "贷款余额证明"], manual_review_required: false },
     { label: "困难救济提取", maximum_amount: "¥50,000", required_evidence: ["经济困难证明", "收入变化说明"], manual_review_required: true }
   ];
   const [selectedRoute, setSelectedRoute] = useState(String(currentFlowState.selectedRouteLabel ?? routeOptions[0]?.label ?? ""));
+  const [selectedRetirementAge, setSelectedRetirementAge] = useState(String(retirementOptions[0]?.retirement_age ?? 60));
+  const [selectedClaimStrategy, setSelectedClaimStrategy] = useState(String(claimStrategies[0]?.label ?? "按月领取"));
   const selectedRouteRecord = routeOptions.find((route) => String(route.label) === selectedRoute) ?? routeOptions[0];
   const routeHint = selectedPensionRouteHint(selectedRoute);
   const blockedByLimit = limitCheck?.status === "blocked";
@@ -1711,7 +1733,13 @@ function PensionTaskPlanWorkspace({
     estimatedNet,
     amountCappedByRoute,
     blockedByLimit,
-    routeMaxAmount
+    routeMaxAmount,
+    retirementOptions,
+    claimStrategies,
+    selectedRetirementAge,
+    setSelectedRetirementAge,
+    selectedClaimStrategy,
+    setSelectedClaimStrategy
   };
 
   return (
@@ -1729,6 +1757,7 @@ function PensionTaskPlanWorkspace({
 function getPensionComponentAlias(component: string) {
   const aliases: Record<string, string> = {
     RouteCards: "EligibilityRoutes",
+    BenefitComparison: "StrategyMatrix",
     AuthorizationGate: "DecisionGate",
     NextDecisionGate: "DecisionGate"
   };
@@ -1913,13 +1942,14 @@ function PensionImpactPreviewStage(context: PensionWorkspaceContext) {
 }
 
 function PensionDecisionGateStage(context: PensionWorkspaceContext) {
+  const isRetirementPlanning = Boolean(context.result.retirement_options);
   return (
     <PensionNextActions
       result={context.result}
       flowState={context.flowState}
       setFlowState={context.setFlowState}
-      selectedRouteLabel={context.selectedRoute}
-      routeMaxAmount={context.routeMaxAmount}
+      selectedRouteLabel={isRetirementPlanning ? undefined : context.selectedRoute}
+      routeMaxAmount={isRetirementPlanning ? undefined : context.routeMaxAmount}
     />
   );
 }
@@ -1943,93 +1973,81 @@ function PensionWorkflowStateStage(context: PensionWorkspaceContext) {
   );
 }
 
+function PensionTimelineStage(context: PensionWorkspaceContext) {
+  return (
+    <PensionStageFrame context={context} eyebrow="退休时间线" title="同一能力转成规划界面，而不是提取表单" icon={<BarChart3 size={19} />}>
+      <div className="pension-timeline">
+        {context.retirementOptions.map((option) => (
+          <button
+            type="button"
+            className={String(option.retirement_age) === context.selectedRetirementAge ? "selected" : ""}
+            key={String(option.retirement_age)}
+            onClick={() => context.setSelectedRetirementAge(String(option.retirement_age))}
+          >
+            <div>
+              <strong>{String(option.retirement_age)} 岁</strong>
+              <span>预计月领 {String(option.estimated_monthly_income)}</span>
+            </div>
+            <div className="pension-timeline-bar">
+              <span style={{ width: String(option.fit_score ?? "74%") }} />
+            </div>
+          </button>
+        ))}
+      </div>
+    </PensionStageFrame>
+  );
+}
+
+function PensionStrategyMatrixStage(context: PensionWorkspaceContext) {
+  return (
+    <PensionStageFrame context={context} eyebrow="领取策略" title="比较领取方式，等待用户明确办理" icon={<ClipboardList size={19} />}>
+      <div className="pension-route-grid">
+        {context.claimStrategies.map((strategy, index) => (
+          <button
+            type="button"
+            className={`${index === 0 ? "ready" : ""} ${String(strategy.label) === context.selectedClaimStrategy ? "selected" : ""}`}
+            key={String(strategy.label)}
+            onClick={() => context.setSelectedClaimStrategy(String(strategy.label))}
+          >
+            <span>{index === 0 ? "稳定现金流" : "灵活资金"}</span>
+            <strong>{String(strategy.label)}</strong>
+            <p>{String(strategy.summary)}</p>
+          </button>
+        ))}
+      </div>
+      <div className="pension-selected-note">
+        <strong>当前比较：{context.selectedRetirementAge} 岁退休 · {context.selectedClaimStrategy}</strong>
+        <span>这里只是规划测算；用户明确办理前，不会进入领取申请。</span>
+      </div>
+    </PensionStageFrame>
+  );
+}
+
 const pensionComponentRegistry: Record<string, (context: PensionWorkspaceContext) => React.ReactElement | null> = {
   IntentSummary: PensionIntentSummaryStage,
   KnownFacts: PensionKnownFactsStage,
   AccountStrip: PensionAccountStripStage,
   EligibilityRoutes: PensionEligibilityRoutesStage,
   ImpactPreview: PensionImpactPreviewStage,
+  Timeline: PensionTimelineStage,
+  StrategyMatrix: PensionStrategyMatrixStage,
   DecisionGate: PensionDecisionGateStage,
   WorkflowState: PensionWorkflowStateStage
 };
 
-function PensionRetirementChoiceWorkspace({ result = {} }: { result?: Record<string, unknown> }) {
-  const retirementOptions = result.retirement_options as Record<string, unknown> | undefined;
-  const options = Array.isArray(retirementOptions?.options)
-    ? retirementOptions.options as Array<Record<string, unknown>>
-    : [
-        { retirement_age: 60, estimated_monthly_income: "¥2,900", fit_score: "74%" },
-        { retirement_age: 63, estimated_monthly_income: "¥3,300", fit_score: "86%" },
-        { retirement_age: 65, estimated_monthly_income: "¥3,600", fit_score: "96%" }
-      ];
-  const strategies = Array.isArray(retirementOptions?.claim_strategies)
-    ? retirementOptions.claim_strategies as Array<Record<string, unknown>>
-    : [
-        { label: "按月领取", summary: "适合希望收入稳定、减少一次性支出风险的用户。" },
-        { label: "部分一次性 + 月领", summary: "适合需要先偿还大额支出，同时保留长期收入的用户。" }
-      ];
-  const [selectedAge, setSelectedAge] = useState(String(options[0]?.retirement_age ?? 60));
-  const [selectedStrategy, setSelectedStrategy] = useState(String(strategies[0]?.label ?? "按月领取"));
-
-  return (
-    <>
-      <section className="pension-business-section">
-        <div className="pension-section-head">
-          <div>
-            <span>退休时间线</span>
-            <h4>同一能力转成规划界面，而不是提取表单</h4>
-          </div>
-          <BarChart3 size={19} />
-        </div>
-        <div className="pension-timeline">
-          {options.map((option) => (
-            <button
-              type="button"
-              className={String(option.retirement_age) === selectedAge ? "selected" : ""}
-              key={String(option.retirement_age)}
-              onClick={() => setSelectedAge(String(option.retirement_age))}
-            >
-              <div>
-                <strong>{String(option.retirement_age)} 岁</strong>
-                <span>预计月领 {String(option.estimated_monthly_income)}</span>
-              </div>
-              <div className="pension-timeline-bar">
-                <span style={{ width: String(option.fit_score ?? "74%") }} />
-              </div>
-            </button>
-          ))}
-        </div>
-      </section>
-
-      <section className="pension-business-section">
-        <div className="pension-section-head">
-          <div>
-            <span>领取策略</span>
-            <h4>比较领取方式，等待用户明确办理</h4>
-          </div>
-          <ClipboardList size={19} />
-        </div>
-        <div className="pension-route-grid">
-          {strategies.map((strategy, index) => (
-            <button
-              type="button"
-              className={`${index === 0 ? "ready" : ""} ${String(strategy.label) === selectedStrategy ? "selected" : ""}`}
-              key={String(strategy.label)}
-              onClick={() => setSelectedStrategy(String(strategy.label))}
-            >
-              <span>{index === 0 ? "稳定现金流" : "灵活资金"}</span>
-              <strong>{String(strategy.label)}</strong>
-              <p>{String(strategy.summary)}</p>
-            </button>
-          ))}
-        </div>
-        <div className="pension-selected-note">
-          <strong>当前比较：{selectedAge} 岁退休 · {selectedStrategy}</strong>
-          <span>这里只是规划测算；用户明确办理前，不会进入领取申请。</span>
-        </div>
-      </section>
-    </>
-  );
+function PensionRetirementChoiceWorkspace({
+  result = {},
+  flowState = { stage: "decision", selectedAction: "choose_retirement_age_to_compare" },
+  setFlowState
+}: {
+  result?: Record<string, unknown>;
+  flowState?: PensionFlowState;
+  setFlowState?: React.Dispatch<React.SetStateAction<PensionFlowState>>;
+}) {
+  if (!setFlowState) {
+    return <PensionTaskPlanWorkspace result={result} flowState={flowState} setFlowState={() => undefined} />;
+  }
+  return <PensionTaskPlanWorkspace result={result} flowState={flowState} setFlowState={setFlowState} />;
 }
 
 function PensionNextActions({
@@ -2167,6 +2185,8 @@ function PensionActionDetail({
   const limitCheck = result.limit_check as Record<string, unknown> | undefined;
   const blockedByLimit = limitCheck?.status === "blocked";
   const requestedAmountValue = parseYuanAmount(impact?.requested_amount) ?? 100000;
+  const retirementOptions = result.retirement_options as Record<string, unknown> | undefined;
+  const isRetirementPlanning = Boolean(retirementOptions);
   const effectiveRouteMaxAmount = routeMaxAmount ?? flowState.routeMaxAmount;
   const routeLabel = selectedRouteLabel ?? flowState.selectedRouteLabel ?? "已选择用途";
   const cappedByRoute = Number.isFinite(effectiveRouteMaxAmount) && requestedAmountValue > Number(effectiveRouteMaxAmount);
@@ -2174,6 +2194,51 @@ function PensionActionDetail({
   const amount = formatYuanAmount(effectiveAmount);
   const originalAmount = formatYuanAmount(requestedAmountValue);
   const net = cappedByRoute ? estimateNetRange(effectiveAmount) : String(impact?.estimated_net ?? "¥92,000 - ¥95,000");
+
+  if (isRetirementPlanning) {
+    if (actionId === "start_controlled_claim_application") {
+      return (
+        <div className="pension-flow-panel">
+          <div>
+            <span>受控领取流程已组装</span>
+            <h4>现在开始才会进入正式领取申请路径</h4>
+            <p className="pension-section-note">当前仍是规划比较；进入办理前需要确认领取策略、身份验证和最终授权。</p>
+          </div>
+          <ol className="pension-application-flow">
+            <li className="done"><strong>规划目标</strong><span>比较退休时间和领取策略</span></li>
+            <li className="done"><strong>方案比较</strong><span>退休年龄、月领金额和适配度</span></li>
+            <li className={flowStage === "application" ? "current" : "done"}><strong>策略确认</strong><span>确认领取方式和风险提示</span></li>
+            <li className={flowStage === "identity" ? "current" : flowStage === "authorization" || flowStage === "submitted" ? "done" : ""}><strong>身份验证</strong><span>强身份校验后才允许提交</span></li>
+            <li className={flowStage === "authorization" ? "current" : flowStage === "submitted" ? "done" : ""}><strong>最终授权</strong><span>用户确认后才创建正式申请</span></li>
+          </ol>
+          <div className="pension-flow-actions">
+            {flowStage === "application" ? (
+              <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_claim_application", stage: "identity" }))}>确认策略，继续身份验证</button>
+            ) : null}
+            {flowStage === "identity" ? (
+              <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_claim_application", stage: "authorization" }))}>身份验证通过，查看最终授权</button>
+            ) : null}
+            {flowStage === "authorization" ? (
+              <button type="button" onClick={() => setFlowState((current) => ({ ...current, selectedAction: "start_controlled_claim_application", stage: "submitted" }))}>确认并提交领取申请</button>
+            ) : null}
+            {flowStage === "submitted" ? <strong className="pension-submit-result">领取申请已创建，后续按审核结果执行。</strong> : null}
+          </div>
+        </div>
+      );
+    }
+
+    return (
+      <div className="pension-flow-panel">
+        <div>
+          <span>规划焦点已收敛</span>
+          <h4>{actionId === "choose_claim_strategy" ? "比较领取方式" : "比较退休年龄"}</h4>
+          <p className="pension-section-note">
+            系统会保留当前画像和账户结果，只围绕退休年龄、预计月领和领取策略继续比较；尚未创建正式领取申请。
+          </p>
+        </div>
+      </div>
+    );
+  }
 
   if (blockedByLimit) {
     return (
@@ -3157,8 +3222,7 @@ function GeneratedBusinessWorkspace({
 
       {!loading && workflow.id === "pension-retirement-choice" ? (
         <>
-          <PensionRetirementChoiceWorkspace result={result} />
-          <PensionNextActions result={result} flowState={pensionFlowState} setFlowState={setPensionFlowState} />
+          <PensionRetirementChoiceWorkspace result={result} flowState={pensionFlowState} setFlowState={setPensionFlowState} />
         </>
       ) : null}
 
