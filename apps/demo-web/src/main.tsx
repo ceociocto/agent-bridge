@@ -14,6 +14,7 @@ import {
   GitBranch,
   Landmark,
   Layers3,
+  ChevronDown,
   Loader2,
   LockKeyhole,
   Network,
@@ -1642,32 +1643,6 @@ function PensionCashAccessWorkspace({
         </section>
       ) : null}
 
-      <section className="pension-business-section">
-        <div className="pension-section-head">
-          <div>
-            <span>系统已为你准备好</span>
-            <h4>不用重新找入口、查规则、填重复资料</h4>
-          </div>
-          <ShieldCheck size={19} />
-        </div>
-        <div className="pension-readiness-grid">
-          <article>
-            <span>账户余额</span>
-            <strong>{String(portfolio?.total_balance ?? "¥680,000")}</strong>
-            <p>已自动读取，不再询问账户信息。</p>
-          </article>
-          <article>
-            <span>身份状态</span>
-            <strong>{member?.identity_status === "verified" ? "已验证" : "待验证"}</strong>
-            <p>正式提交前仍会进行强身份确认。</p>
-          </article>
-          <article>
-            <span>可行路径</span>
-            <strong>{routeOptions.length} 个</strong>
-            <p>系统只保留与你目标相关的路径。</p>
-          </article>
-        </div>
-      </section>
 
       <section className="pension-business-section">
         <div className="pension-section-head">
@@ -2728,24 +2703,43 @@ function MicroWorkflowProgress({
       }))
     : rawSteps;
   const currentStep = pensionWorkflow ? Math.min(pensionCurrentStep, steps.length - 1) : run?.currentStepIndex ?? 0;
+  const [collapsed, setCollapsed] = useState(true);
+  const currentStepLabel = steps[currentStep]?.label ?? "业务执行步骤";
+  const completedCount = steps.filter((step) => step.status === "completed").length;
 
   return (
-    <nav className={pensionWorkflow ? "micro-workflow-progress customer-progress" : "micro-workflow-progress"} aria-label="Current business workflow">
-      {steps.map((step, index) => (
-        <button
-          type="button"
-          className={step.status === "completed" ? "completed" : index === currentStep ? "current" : ""}
-          key={step.label}
-          disabled
-          aria-current={index === currentStep ? "step" : undefined}
-        >
-          <span>{step.status === "completed" ? <CheckCircle2 size={15} /> : index + 1}</span>
-          <div>
-            <strong>{step.label}</strong>
-            <p>{step.detail}</p>
-          </div>
-        </button>
-      ))}
+    <nav className="micro-workflow-progress-wrap" aria-label="Current business workflow">
+      <button
+        type="button"
+        className={`progress-collapse-toggle${collapsed ? " collapsed" : ""}`}
+        onClick={() => setCollapsed((current) => !current)}
+        aria-expanded={!collapsed}
+      >
+        <Layers3 size={15} />
+        <span className="toggle-label">业务执行步骤</span>
+        <em className="toggle-current">{currentStepLabel}</em>
+        <small className="toggle-count">{completedCount}/{steps.length}</small>
+        <ChevronDown size={16} className={collapsed ? "" : "flipped"} />
+      </button>
+      <div
+        className={`micro-workflow-progress${pensionWorkflow ? " customer-progress" : ""}${collapsed ? " collapsed" : ""}`}
+      >
+        {steps.map((step, index) => (
+          <button
+            type="button"
+            className={step.status === "completed" ? "completed" : index === currentStep ? "current" : ""}
+            key={step.label}
+            disabled
+            aria-current={index === currentStep ? "step" : undefined}
+          >
+            <span>{step.status === "completed" ? <CheckCircle2 size={15} /> : index + 1}</span>
+            <div>
+              <strong>{step.label}</strong>
+              <p>{step.detail}</p>
+            </div>
+          </button>
+        ))}
+      </div>
     </nav>
   );
 }

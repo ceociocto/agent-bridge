@@ -3005,6 +3005,75 @@ pre {
   }
 }
 
+/* Collapsible micro-workflow tracker: folded by default, expands on demand. */
+.micro-workflow-progress-wrap {
+  margin-bottom: 16px;
+}
+
+.micro-workflow-progress-wrap .micro-workflow-progress {
+  margin-bottom: 0;
+  border-radius: 0 0 8px 8px;
+}
+
+.micro-workflow-progress.collapsed {
+  display: none;
+}
+
+.progress-collapse-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  border: 1px solid var(--agentic-line);
+  border-radius: 8px;
+  padding: 11px 14px;
+  background: rgba(15, 21, 20, 0.96);
+  color: var(--agentic-text);
+  text-align: left;
+  cursor: pointer;
+  transition: background 220ms var(--ease-out-expo);
+}
+
+.progress-collapse-toggle:not(.collapsed) {
+  border-radius: 8px 8px 0 0;
+  border-bottom-color: transparent;
+}
+
+.progress-collapse-toggle:hover {
+  background: rgba(28, 37, 34, 0.98);
+}
+
+.progress-collapse-toggle .toggle-label {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.progress-collapse-toggle .toggle-current {
+  flex: 1;
+  margin: 0;
+  font-size: 12px;
+  font-style: normal;
+  color: var(--agentic-muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.progress-collapse-toggle .toggle-count {
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--agentic-green);
+}
+
+.progress-collapse-toggle svg {
+  transition: transform 220ms var(--ease-out-expo);
+}
+
+.progress-collapse-toggle .flipped {
+  transform: rotate(180deg);
+}
+
 /* Focused micro-workflow: one user task and one generated surface at a time. */
 .micro-workflow-progress {
   display: grid;
