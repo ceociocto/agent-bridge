@@ -1943,6 +1943,10 @@ function PensionImpactPreviewStage(context: PensionWorkspaceContext) {
 
 function PensionDecisionGateStage(context: PensionWorkspaceContext) {
   const isRetirementPlanning = Boolean(context.result.retirement_options);
+  if (isRetirementPlanning) {
+    return <PensionRetirementControlledGate context={context} />;
+  }
+
   return (
     <PensionNextActions
       result={context.result}
@@ -1951,6 +1955,39 @@ function PensionDecisionGateStage(context: PensionWorkspaceContext) {
       selectedRouteLabel={isRetirementPlanning ? undefined : context.selectedRoute}
       routeMaxAmount={isRetirementPlanning ? undefined : context.routeMaxAmount}
     />
+  );
+}
+
+function PensionRetirementControlledGate({ context }: { context: PensionWorkspaceContext }) {
+  const flowStage = context.flowState.stage === "decision" || context.flowState.stage === "purpose"
+    ? "application"
+    : context.flowState.stage;
+
+  return (
+    <section className="pension-business-section pension-next-actions">
+      <div className="pension-section-head">
+        <div>
+          <span>受控领取流程</span>
+          <h4>已按你的选择自动组装申请路径</h4>
+        </div>
+        <GitBranch size={19} />
+      </div>
+      <div className="pension-selected-note">
+        <strong>已选择：{context.selectedRetirementAge} 岁退休 · {context.selectedClaimStrategy}</strong>
+        <span>后续不再重复询问方案选择，只进行策略确认、身份验证和最终授权。</span>
+      </div>
+      <PensionActionDetail
+        actionId="start_controlled_claim_application"
+        result={context.result}
+        flowState={{
+          ...context.flowState,
+          selectedAction: "start_controlled_claim_application",
+          stage: flowStage
+        }}
+        flowStage={flowStage}
+        setFlowState={context.setFlowState}
+      />
+    </section>
   );
 }
 
@@ -1982,7 +2019,14 @@ function PensionTimelineStage(context: PensionWorkspaceContext) {
             type="button"
             className={String(option.retirement_age) === context.selectedRetirementAge ? "selected" : ""}
             key={String(option.retirement_age)}
-            onClick={() => context.setSelectedRetirementAge(String(option.retirement_age))}
+            onClick={() => {
+              context.setSelectedRetirementAge(String(option.retirement_age));
+              context.setFlowState((current) => ({
+                ...current,
+                selectedAction: "start_controlled_claim_application",
+                stage: current.stage === "identity" || current.stage === "authorization" || current.stage === "submitted" ? current.stage : "application"
+              }));
+            }}
           >
             <div>
               <strong>{String(option.retirement_age)} 岁</strong>
@@ -2000,14 +2044,21 @@ function PensionTimelineStage(context: PensionWorkspaceContext) {
 
 function PensionStrategyMatrixStage(context: PensionWorkspaceContext) {
   return (
-    <PensionStageFrame context={context} eyebrow="领取策略" title="比较领取方式，等待用户明确办理" icon={<ClipboardList size={19} />}>
+    <PensionStageFrame context={context} eyebrow="领取策略" title="比较领取方式，选择后进入受控办理准备" icon={<ClipboardList size={19} />}>
       <div className="pension-route-grid">
         {context.claimStrategies.map((strategy, index) => (
           <button
             type="button"
             className={`${index === 0 ? "ready" : ""} ${String(strategy.label) === context.selectedClaimStrategy ? "selected" : ""}`}
             key={String(strategy.label)}
-            onClick={() => context.setSelectedClaimStrategy(String(strategy.label))}
+            onClick={() => {
+              context.setSelectedClaimStrategy(String(strategy.label));
+              context.setFlowState((current) => ({
+                ...current,
+                selectedAction: "start_controlled_claim_application",
+                stage: current.stage === "identity" || current.stage === "authorization" || current.stage === "submitted" ? current.stage : "application"
+              }));
+            }}
           >
             <span>{index === 0 ? "稳定现金流" : "灵活资金"}</span>
             <strong>{String(strategy.label)}</strong>
@@ -2017,7 +2068,7 @@ function PensionStrategyMatrixStage(context: PensionWorkspaceContext) {
       </div>
       <div className="pension-selected-note">
         <strong>当前比较：{context.selectedRetirementAge} 岁退休 · {context.selectedClaimStrategy}</strong>
-        <span>这里只是规划测算；用户明确办理前，不会进入领取申请。</span>
+        <span>已具备关键选择，系统会把它们带入下方受控领取流程。</span>
       </div>
     </PensionStageFrame>
   );
@@ -2199,11 +2250,11 @@ function PensionActionDetail({
     if (actionId === "start_controlled_claim_application") {
       return (
         <div className="pension-flow-panel">
-          <div>
-            <span>受控领取流程已组装</span>
-            <h4>现在开始才会进入正式领取申请路径</h4>
-            <p className="pension-section-note">当前仍是规划比较；进入办理前需要确认领取策略、身份验证和最终授权。</p>
-          </div>
+        <div>
+          <span>受控领取流程已组装</span>
+            <h4>现在进入正式领取申请准备路径</h4>
+            <p className="pension-section-note">系统已带入已选退休年龄和领取方式；提交前仍需要策略确认、身份验证和最终授权。</p>
+        </div>
           <ol className="pension-application-flow">
             <li className="done"><strong>规划目标</strong><span>比较退休时间和领取策略</span></li>
             <li className="done"><strong>方案比较</strong><span>退休年龄、月领金额和适配度</span></li>
@@ -2727,12 +2778,6 @@ function AgenticWebPage() {
           <PanelsTopLeft size={17} />
           <span>Agentic Web</span>
         </a>
-        <div className="agentic-system">
-          <span className="live-chip">Client/adviser experience</span>
-          <span>Dynamic A2UI page</span>
-          <span>AG-UI runtime hidden</span>
-          <span>Durable workflow demo</span>
-        </div>
       </section>
 
       <section className="agentic-layout">
@@ -2756,24 +2801,18 @@ function AgenticWebPage() {
             <>
               <div className="agentic-result-head">
                 <div>
-                  <span>{hasIntentBoundary ? "Intent boundary" : "Generated business workspace"}</span>
+                  {hasIntentBoundary ? <span>Intent boundary</span> : null}
                   <h1>{hasIntentBoundary ? "Request recognised" : renderedWorkflow.title}</h1>
                 </div>
                 <div className="surface-meta">
-                  {isPensionWorkflow(renderedWorkflow) && !hasIntentBoundary ? (
-                    <>
-                      <span>会员服务</span>
-                      <span>{loading ? "正在准备" : "方案已准备"}</span>
-                      <span>未提交申请</span>
-                    </>
-                  ) : (
+                  {!isPensionWorkflow(renderedWorkflow) || hasIntentBoundary ? (
                     <>
                       <span>{hasIntentBoundary ? response?.resolution.intent ?? "outside catalog" : renderedWorkflow.audience}</span>
                       <span>{response?.resolution.status ?? (loading ? "composing" : "ready")}</span>
                       {!hasIntentBoundary ? <span>{renderedWorkflow.microWorkflow.replaceAll("_", " ")}</span> : null}
                       {workflowRun ? <span>plan v{workflowRun.agent.planVersion}</span> : null}
                     </>
-                  )}
+                  ) : null}
                 </div>
               </div>
 
@@ -2817,7 +2856,6 @@ function AgenticWebPage() {
           <div className="assistant-panel-head">
             <div>
               <span>Conversation</span>
-              <strong>Intent narrows as the thread continues</strong>
             </div>
             <button
               type="button"
@@ -2877,7 +2915,7 @@ function AgenticWebPage() {
             </label>
             <button className="agentic-send" type="submit" disabled={loading || !currentPrompt.trim()}>
               {loading ? <Loader2 className="spin" size={18} /> : <SendHorizontal size={18} />}
-              <span>{hasRun ? "Send follow-up" : "Generate workspace"}</span>
+              <span>{hasRun ? "Send" : "Generate workspace"}</span>
             </button>
           </form>
 
